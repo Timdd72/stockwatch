@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aktie suchen – StockWatch</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <a class="back-link" href="/">← Zur Übersicht</a>
+      <p class="eyebrow">StockWatch</p>
+      <h1>Aktie suchen</h1>
+      <p class="subtitle">Lokaler Wertpapierkatalog – keine API-Aufrufe</p>
+    </header>
+
+    {% if selection == 'created' %}<p class="notice success">{{ symbol }} wurde zu StockWatch hinzugefügt. Es wurde keine Position angelegt.</p>{% endif %}
+    {% if selection == 'existing' %}<p class="notice neutral-notice">{{ symbol }} ist bereits in StockWatch vorhanden.</p>{% endif %}
+    {% if error %}<p class="notice error">{{ error }}</p>{% endif %}
+
+    <form class="search-form card" method="get" action="/securities/search">
+      <label for="q">Name, Symbol oder ISIN</label>
+      <div class="search-row">
+        <input id="q" name="q" value="{{ query }}" placeholder="z. B. Alphabet, GOOGL oder NL0000235190" autofocus>
+        <button type="submit">Suchen</button>
+      </div>
+    </form>
+
+    {% if searched %}
+    <section class="search-results">
+      <h2>Suchergebnisse</h2>
+      {% if results %}
+      <div class="result-list">
+        {% for security in results %}
+        <article class="card result-card">
+          <div>
+            <span class="symbol">{{ security.symbol }}</span>
+            <h3>{{ security.name }}</h3>
+            <dl class="security-meta">
+              <div><dt>ISIN</dt><dd>{{ security.isin or '–' }}</dd></div>
+              <div><dt>Börse</dt><dd>{{ security.exchange or '–' }}</dd></div>
+              <div><dt>Land</dt><dd>{{ security.country or '–' }}</dd></div>
+              <div><dt>Währung</dt><dd>{{ security.currency or '–' }}</dd></div>
+              <div><dt>Typ</dt><dd>{{ security.security_type }}</dd></div>
+            </dl>
+          </div>
+          <form method="post" action="/securities/{{ security.id }}/select">
+            <button type="submit">Auswählen</button>
+          </form>
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}<p class="empty">Keine Treffer</p>{% endif %}
+    </section>
+    {% endif %}
+  </main>
+</body>
+</html>

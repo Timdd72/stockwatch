@@ -1,0 +1,5 @@
+name,symbol,isin,exchange,country,currency,security_type,source,provider_symbol_alpha_vantage,provider_symbol_finnhub
+Airbus SE,AIR.PA,NL0000235190,Euronext Paris,Netherlands,EUR,Common Stock,stockwatch-sample,AIR.PAR,AIR.PA
+Microsoft Corporation,MSFT,US5949181045,NASDAQ,United States,USD,Common Stock,stockwatch-sample,,MSFT
+Alphabet Inc Class A,GOOGL,US02079K3059,NASDAQ,United States,USD,Common Stock,stockwatch-sample,,
+Alphabet Inc Class C,GOOG,US02079K1079,NASDAQ,United States,USD,Common Stock,stockwatch-sample,,

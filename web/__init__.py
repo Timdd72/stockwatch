@@ -1,0 +1,1 @@
+"""Lokale StockWatch-Weboberfläche."""

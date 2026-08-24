@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aktualisierungsplan – StockWatch</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+</head>
+<body><main class="container">
+  <header><a class="back-link" href="/">← Zurück zu Meine Aktien</a><p class="eyebrow">Einstellungen</p><h1>Aktualisierungsplan</h1></header>
+  {% if saved %}<p class="notice success">{{ saved }}</p>{% endif %}
+  {% if error %}<p class="notice error">{{ error }}</p>{% endif %}
+  <section class="card scheduler-master">
+    <h2>Automatische Aktualisierung {{ 'EIN' if enabled else 'AUS' }}</h2>
+    <form method="post" action="/scheduler/toggle">
+      <label class="checkbox"><input type="checkbox" name="enabled" {% if enabled %}checked{% endif %}> Scheduler aktivieren</label>
+      <button type="submit">Master-Schalter speichern</button>
+    </form>
+    <p class="subtitle">Bei AUS werden keine automatischen Requests ausgeführt. Manuelle Aktualisierungen bleiben verfügbar.</p>
+  </section>
+  <section><h2>Zeitpläne</h2><div class="schedule-list">
+    {% for item in schedules %}
+    <form class="card schedule-row" method="post" action="/scheduler/schedules/{{ item.schedule.id }}">
+      <div><strong>{{ item.stock.symbol }} · {{ item.schedule.data_type }}</strong><small>Letzter Lauf: {% if item.last_run %}{{ item.last_run.started_at.strftime('%d.%m.%Y, %H:%M') }} · {{ item.last_run.status }}{% else %}–{% endif %}<br>Nächster Lauf: {{ item.next_run.strftime('%d.%m.%Y, %H:%M %Z') if item.next_run else '–' }}</small></div>
+      <label>Cron-Ausdruck<input name="cron_expression" value="{{ item.schedule.cron_expression }}" required></label>
+      <label>Zeitzone<input name="timezone" value="{{ item.schedule.timezone }}" required></label>
+      <label class="checkbox"><input type="checkbox" name="enabled" {% if item.schedule.enabled %}checked{% endif %}> aktiviert</label>
+      <label class="checkbox"><input type="checkbox" name="weekdays_only" {% if item.schedule.weekdays_only %}checked{% endif %}> nur Werktage</label>
+      <button type="submit">Zeitplan speichern</button>
+    </form>
+    {% endfor %}
+  </div></section>
+  <section><h2>Letzte Läufe</h2>{% if runs %}<div class="card"><dl>{% for run in runs %}<div><dt>{{ run.data_type }} · Aktie #{{ run.stock_id }}</dt><dd>{{ run.status }} · {{ run.started_at.strftime('%d.%m.%Y, %H:%M') if run.started_at else '–' }}</dd></div>{% endfor %}</dl></div>{% else %}<p class="empty">Noch keine automatischen Läufe.</p>{% endif %}</section>
+</main></body></html>

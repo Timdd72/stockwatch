@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ dashboard.stock.name }} – StockWatch</title><link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}"><script src="{{ url_for('static', path='/action-state.js') }}" defer></script></head>
+<body class="stock-detail-page"><main class="container detail-container">
+  <header class="compact-header">
+    <div class="compact-nav"><a class="back-link" href="/">← Meine Aktien</a><a class="subtle-link" href="/stocks/{{ dashboard.stock.id }}/providers">Einstellungen</a></div>
+    <div class="title-line"><div><p class="eyebrow">{{ dashboard.stock.symbol }}</p><h1>{{ dashboard.stock.name }}</h1></div><p class="subtitle">{{ dashboard.stock.exchange }} · {{ dashboard.stock.currency }}</p></div>
+  </header>
+  {% if created %}<p class="notice success compact-notice">Position wurde angelegt.</p>{% endif %}
+  {% if error %}<p class="notice error compact-notice">{{ error }}</p>{% endif %}
+  {% if updated %}<p class="notice success compact-notice">{{ updated }}</p>{% endif %}
+  {% if update_error %}<p class="notice error compact-notice">{{ update_error }}</p>{% endif %}
+  {% if ai_message %}<p class="notice success compact-notice">{{ ai_message }}</p>{% endif %}
+  {% if ai_error %}<p class="notice error compact-notice">{{ ai_error }}{% if ai_analysis %} Letzte Analyse bleibt erhalten.{% endif %}</p>{% endif %}
+  {% if update_report %}
+    {% set issues = update_report['items'] | selectattr('status', 'in', ['limit', 'failed']) | list %}
+    <div class="notice {{ 'error' if issues else 'success' }} compact-update-result">
+      <strong>{{ 'Aktualisierung teilweise erfolgreich' if issues else 'Aktualisierung erfolgreich' }}</strong> · {{ update_report.completed_at[8:10] }}.{{ update_report.completed_at[5:7] }}.{{ update_report.completed_at[:4] }} {{ update_report.completed_at[11:16] }}
+      <details><summary>Details anzeigen</summary>
+        {% set labels = {'quote':'Kurs','history':'Historie','fundamentals':'Fundamentals','news':'News','analyst':'Analysten','earnings':'Earnings'} %}
+        {% set provider_labels = {'alpha_vantage':'Alpha Vantage','finnhub':'Finnhub','yahoo':'Yahoo'} %}
+        <dl>{% for item in update_report['items'] %}<div><dt>{{ labels[item.data_type] }}</dt><dd>{{ provider_labels.get(item.provider, '–') }} · {{ item.message }}</dd></div>{% endfor %}</dl>
+      </details>
+    </div>
+  {% endif %}
+  {% set s = dashboard.technical_snapshot %}{% set p = dashboard.position %}
+  <section class="primary-overview card">
+    <div class="price-primary"><span>{% if dashboard.snapshot and dashboard.snapshot.price_type == 'DAILY_CLOSE' %}Letzter verfügbarer Schlusskurs{% elif dashboard.snapshot and dashboard.snapshot.price_type == 'MANUAL' %}Manuell eingetragener Kurs{% else %}Letzter Kurs{% endif %}</span>{% if dashboard.snapshot %}<strong>{{ dashboard.snapshot.price|number }} {{ dashboard.stock.currency }}</strong>{% if dashboard.snapshot.price_type == 'DAILY_CLOSE' %}<small>Schlusskurs vom {{ dashboard.snapshot.market_timestamp.strftime('%d.%m.%Y') if dashboard.snapshot.market_timestamp else 'unbekannten Börsentag' }}{% if dashboard.snapshot.provider %} · Quelle: {{ 'Alpha Vantage' if dashboard.snapshot.provider == 'alpha_vantage' else dashboard.snapshot.provider }}{% endif %}</small>{% elif dashboard.snapshot.price_type == 'MANUAL' %}<small>manuell aktualisiert {{ dashboard.snapshot.manual_entered_at|berlin_time }}</small>{% else %}<small>{{ (dashboard.snapshot.market_timestamp or dashboard.snapshot.fetched_at or dashboard.snapshot.timestamp)|berlin_time }}{% if dashboard.snapshot.price_type == 'DELAYED' %} · verzögert{% endif %}</small>{% endif %}{% else %}<strong class="no-market-data">Noch keine Marktdaten vorhanden</strong>{% endif %}</div>
+    {% if p %}<div class="position-primary"><span>Gewinn / Verlust</span><strong class="{{ p.profit_loss|value_class }}">{{ p.profit_loss|number }} {{ dashboard.stock.currency if p.profit_loss is not none else '' }}</strong><small class="{{ p.profit_loss_percent|value_class }}">{{ p.profit_loss_percent|number }} % · Kauf {{ p.position.purchase_price|number }} · {{ p.position.quantity|number(6) }} Stück</small></div>{% else %}<div class="position-primary"><span>Position</span><strong class="neutral">Keine aktive Position</strong></div>{% endif %}
+    <form class="quick-update" method="post" action="/stocks/{{ dashboard.stock.id }}/update" data-api-action data-wait-text="Aktie wird aktualisiert …"><button type="submit">Jetzt aktualisieren</button><small>Aktualisiert automatisch nur veraltete Daten.</small></form>
+  </section>
+  {% if manual_quote_enabled %}<section class="card manual-quote"><h2>Kurs manuell aktualisieren</h2>{% if dashboard.stock.external_quote_url %}<p><a class="button-link secondary-button" href="{{ dashboard.stock.external_quote_url }}" target="_blank" rel="noopener noreferrer">Kurs extern prüfen</a></p>{% endif %}<form method="post" action="/stocks/{{ dashboard.stock.id }}/manual-price"><label>Aktuellen Kurs manuell eintragen <span><input name="manual_price" inputmode="decimal" placeholder="206,10" value="{{ form.get('manual_price','') }}" required> {{ dashboard.stock.currency }}</span></label><button type="submit">Speichern</button></form></section>{% endif %}
+  <section class="ai-assessment card" aria-label="StockWatch Einschätzung">
+    <div class="ai-heading"><div><span>StockWatch Einschätzung</span>{% if not ai_analysis %}<strong>Noch keine KI-Analyse vorhanden.</strong>{% endif %}</div></div>
+    {% if ai_analysis %}
+      {% if ai_analysis.analysis.position_rating %}<div class="ai-dual-ratings">
+        <div><span>Bestehende Position</span><strong>{{ ai_rating_labels.get(ai_analysis.analysis.position_rating, ai_analysis.analysis.position_rating) }}</strong><b>{{ (ai_analysis.analysis.position_confidence * 100)|round|int }} %</b></div>
+        <div><span>Neukauf</span><strong>{{ ai_rating_labels.get(ai_analysis.analysis.entry_rating, ai_analysis.analysis.entry_rating) }}</strong><b>{{ (ai_analysis.analysis.entry_confidence * 100)|round|int }} %</b></div>
+      </div>{% else %}<p><strong>Historische Bewertung:</strong> {{ ai_rating_labels.get(ai_analysis.analysis.legacy_rating or ai_analysis.analysis.rating, ai_analysis.analysis.rating) }} · {{ (ai_analysis.analysis.confidence * 100)|round|int }} %</p>{% endif %}
+      <div class="ai-meta">Ausblick: {{ ai_analysis.analysis.outlook|lower }} · Risiko: {{ ai_analysis.analysis.risk|lower }} · Horizont: 1–3 Monate</div>
+      <p>{{ ai_analysis.analysis.summary }}</p>
+      {% if ai_analysis.analysis.position_reason %}<p><strong>Position:</strong> {{ ai_analysis.analysis.position_reason }}</p>{% endif %}
+      {% if ai_analysis.analysis.entry_reason %}<p><strong>Neukauf:</strong> {{ ai_analysis.analysis.entry_reason }}</p>{% endif %}
+      <div class="ai-zones">
+        {% if ai_analysis.analysis.target_low is not none %}<span>Ziel: <strong>{{ ai_analysis.analysis.target_low|number }}–{{ ai_analysis.analysis.target_high|number }} {{ dashboard.stock.currency }}</strong></span>{% endif %}
+        {% if ai_analysis.analysis.entry_low is not none %}<span>Einstieg: <strong>{{ ai_analysis.analysis.entry_low|number }}–{{ ai_analysis.analysis.entry_high|number }} {{ dashboard.stock.currency }}</strong></span>{% endif %}
+        {% if ai_analysis.analysis.protect_profit_low is not none %}<span>Gewinn absichern: <strong>{{ ai_analysis.analysis.protect_profit_low|number }}–{{ ai_analysis.analysis.protect_profit_high|number }} {{ dashboard.stock.currency }}</strong></span>{% endif %}
+        {% if ai_analysis.analysis.stop_low is not none %}<span>Stop: <strong>{{ ai_analysis.analysis.stop_low|number }}–{{ ai_analysis.analysis.stop_high|number }} {{ dashboard.stock.currency }}</strong></span>{% endif %}
+      </div>
+      <details><summary>Gründe und Risiken</summary><div class="ai-lists"><ul>{% for item in ai_analysis.reasons %}<li>{{ item }}</li>{% endfor %}</ul><ul>{% for item in ai_analysis.risks %}<li>{{ item }}</li>{% endfor %}</ul></div></details>
+      <small>Letzte Analyse vom {{ ai_analysis.analysis.created_at|berlin_time }} · Datenstand {{ ai_analysis.analysis.data_timestamp|berlin_time }}</small>
+      <form method="post" action="/stocks/{{ dashboard.stock.id }}/ai/analyze" data-api-action data-wait-text="KI-Analyse läuft …"><button class="secondary-button" type="submit">Neu analysieren</button></form>
+    {% else %}<form method="post" action="/stocks/{{ dashboard.stock.id }}/ai/analyze" data-api-action data-wait-text="KI-Analyse läuft …"><button class="secondary-button" type="submit">Jetzt analysieren</button></form>{% endif %}
+  </section>
+  {% if ai_analysis and ai_analysis.news %}<section class="ai-news"><h2>Kursrelevante Nachrichten</h2>{% for assessment, news in ai_analysis.news %}<article class="card ai-news-item"><span class="ai-news-signal {{ assessment.expected_direction|lower }}">{{ assessment.expected_direction }} · {{ assessment.expected_strength }}</span><strong>{{ news.headline }}</strong><p>{{ assessment.short_reason }}</p><small>{{ news.datetime|berlin_time }} · {{ news.source }}</small></article>{% endfor %}</section>{% endif %}
+  <section class="key-metrics" aria-label="Wichtige Kennzahlen">
+    <div class="metric-emphasis"><span>Trend</span><strong class="trend {{ s.trend|lower if s else 'neutral' }}">{{ s.trend if s else 'nicht verfügbar' }}</strong></div>
+    <div class="metric-emphasis"><span>RSI14</span><strong>{{ s.rsi14|number if s else 'nicht verfügbar' }}</strong></div>
+    <div><span>Performance 5 Tage</span><strong class="{{ s.performance_5d|value_class if s else 'neutral' }}">{{ s.performance_5d|number if s else 'nicht verfügbar' }}{% if s and s.performance_5d is not none %} %{% endif %}</strong></div>
+    <div><span>Performance 20 Tage</span><strong class="{{ s.performance_20d|value_class if s else 'neutral' }}">{{ s.performance_20d|number if s else 'nicht verfügbar' }}{% if s and s.performance_20d is not none %} %{% endif %}</strong></div>
+    <div><span>Performance 60 Tage</span><strong class="{{ s.performance_60d|value_class if s else 'neutral' }}">{{ s.performance_60d|number if s else 'nicht verfügbar' }}{% if s and s.performance_60d is not none %} %{% endif %}</strong></div>
+    <div><span>SMA20</span><strong>{{ s.sma20|number if s else 'nicht verfügbar' }}{% if s and s.sma20 is not none %} {{ dashboard.stock.currency }}{% endif %}</strong></div>
+    <div><span>SMA50</span><strong>{{ s.sma50|number if s else 'nicht verfügbar' }}{% if s and s.sma50 is not none %} {{ dashboard.stock.currency }}{% endif %}</strong></div>
+  </section>
+  <p class="disclaimer compact-disclaimer">Technische Kennzahlen und Trend sind keine Kauf- oder Verkaufsempfehlung.</p>
+  <section class="secondary-sections">
+    <details class="card detail-panel"><summary>Weitere Details</summary><div class="secondary-grid">
+      <div><span>Volatilität 20 Tage</span><strong>{{ s.volatility_20d|number if s else 'nicht verfügbar' }}{% if s and s.volatility_20d is not none %} % p. a.{% endif %}</strong></div>
+      <div><span>Abstand SMA20</span><strong>{{ s.distance_sma20_percent|number if s else 'nicht verfügbar' }}{% if s and s.distance_sma20_percent is not none %} %{% endif %}</strong></div>
+      <div><span>Abstand SMA50</span><strong>{{ s.distance_sma50_percent|number if s else 'nicht verfügbar' }}{% if s and s.distance_sma50_percent is not none %} %{% endif %}</strong></div>
+      <div><span>SMA200</span><strong>{{ s.sma200|number if s else 'nicht verfügbar' }}{% if s and s.sma200 is not none %} {{ dashboard.stock.currency }}{% endif %}</strong></div>
+      <div><span>Marktzeitpunkt</span><strong>{{ dashboard.snapshot.market_timestamp|berlin_time if dashboard.snapshot and dashboard.snapshot.market_timestamp else '–' }}</strong></div><div><span>Abgerufen</span><strong>{{ (dashboard.snapshot.fetched_at or dashboard.snapshot.timestamp)|berlin_time if dashboard.snapshot else '–' }}</strong></div>
+      <div><span>Technische Analyse</span><strong>{{ s.timestamp.strftime('%d.%m.%Y, %H:%M') if s else '–' }}</strong></div>
+    </div></details>
+    <details class="card detail-panel"><summary>API-Status</summary><div class="api-details">
+      <div><strong>Alpha Vantage:</strong> {{ usage.alpha_today }} / {{ usage.alpha_limit }} heute · {{ usage.alpha_remaining }} verfügbar</div><div><strong>Finnhub:</strong> {{ usage.finnhub_today }} heute · {{ usage.finnhub_last_minute }} / {{ usage.finnhub_minute_limit }} letzte 60 Sekunden</div>
+      <div><strong>Letzter Erfolg:</strong> {% if usage.last_success %}{{ usage.last_success.provider }} · {{ usage.last_success.endpoint }} · {{ usage.last_success.timestamp.strftime('%d.%m.%Y, %H:%M') }}{% else %}–{% endif %}</div><div><strong>Letzter Fehler:</strong> {% if usage.last_error %}{{ usage.last_error.provider }} · {{ usage.last_error.error_type or 'Fehler' }} · {{ usage.last_error.timestamp.strftime('%d.%m.%Y, %H:%M') }}{% else %}–{% endif %}</div>
+    </div></details>
+    <details class="card detail-panel"><summary>Position verwalten</summary>
+      {% if p %}<dl class="compact-position"><div><dt>Kaufpreis</dt><dd>{{ p.position.purchase_price|number }} {{ dashboard.stock.currency }}</dd></div><div><dt>Stückzahl</dt><dd>{{ p.position.quantity|number(6) }}</dd></div><div><dt>Kaufdatum</dt><dd>{{ p.position.purchase_date.strftime('%d.%m.%Y') }}</dd></div><div><dt>Investierter Betrag</dt><dd>{{ p.invested_amount|number }} {{ dashboard.stock.currency }}</dd></div><div><dt>Aktueller Positionswert</dt><dd>{{ p.current_value|number }} {{ dashboard.stock.currency if p.current_value is not none else '' }}</dd></div></dl>{% endif %}
+      {% if not p %}<form class="compact-form" method="post" action="/stocks/{{ dashboard.stock.id }}/positions"><label>Kaufpreis<input name="purchase_price" inputmode="decimal" required value="{{ form.get('purchase_price', '') }}"></label><label>Stückzahl<input name="quantity" inputmode="decimal" required value="{{ form.get('quantity', '') }}"></label><label>Kaufdatum<input name="purchase_date" type="date" required value="{{ form.get('purchase_date', '') }}"></label><button type="submit">Position speichern</button></form>{% endif %}
+    </details>
+    <details class="card detail-panel"><summary>Einstellungen</summary><p><a href="/stocks/{{ dashboard.stock.id }}/providers">Datenquelle wählen</a></p></details>
+  </section>
+</main></body></html>

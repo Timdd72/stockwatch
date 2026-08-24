@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Datenquellen – {{ stock.name }} – StockWatch</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}">
+  <script src="{{ url_for('static', path='/action-state.js') }}" defer></script>
+</head>
+<body>
+  <main class="container">
+    <header>
+      <a class="back-link" href="/stocks/{{ stock.id }}">← Zurück zur Aktie</a>
+      <p class="eyebrow">Einstellungen · {{ stock.symbol }}</p>
+      <h1>Datenquelle wählen</h1>
+      <p class="subtitle">Provider-Konfiguration für {{ stock.name }}</p>
+    </header>
+    {% if saved %}<p class="notice success">Datenquellen wurden gespeichert.</p>{% endif %}
+    {% if checked %}<p class="notice success">{{ checked }}</p>{% endif %}
+    {% if error %}<p class="notice error">{{ error }}</p>{% endif %}
+    <section class="card provider-panel">
+      <h2>Datenquellen</h2>
+      <p class="subtitle">Yahoo ist derzeit deaktiviert. Änderungen werden je Aktie und Datentyp gespeichert.</p>
+      {% set labels = {'quote':'Kurs','history':'Historie','fundamentals':'Fundamentals','news':'News','analyst':'Analysten','earnings':'Earnings'} %}
+      {% set provider_labels = {'alpha_vantage':'Alpha Vantage','finnhub':'Finnhub','yahoo':'Yahoo (deaktiviert)','none':'Keine'} %}
+      {% set status_labels = {'available':'verfügbar','premium_required':'Premium','unavailable':'nicht verfügbar','error':'Fehler'} %}
+      <form method="post" action="/stocks/{{ stock.id }}/providers">
+        <label>Externe Kursseite<input type="url" name="external_quote_url" value="{{ stock.external_quote_url or '' }}" placeholder="https://…"></label><p class="subtitle">Der Link wird nur geöffnet; StockWatch ruft diese Seite nicht automatisch ab.</p>
+        <div class="provider-grid">
+        {% for setting in provider_settings %}
+          {% set capability = capabilities.get((setting.primary_provider, setting.data_type)) %}
+          <div class="provider-row">
+            <strong>{{ labels[setting.data_type] }}</strong>
+            <label>Primärprovider<select name="primary_{{ setting.data_type }}">
+              {% for provider in provider_options %}<option value="{{ provider }}" {% if provider == setting.primary_provider %}selected{% endif %}>{{ provider_labels[provider] }}</option>{% endfor %}
+            </select></label>
+            <label>Fallback<select name="fallback_{{ setting.data_type }}">
+              {% for provider in provider_options %}<option value="{{ provider }}" {% if provider == (setting.fallback_provider or 'none') %}selected{% endif %}>{{ provider_labels[provider] }}</option>{% endfor %}
+            </select></label>
+            <label class="checkbox"><input type="checkbox" name="auto_{{ setting.data_type }}" {% if setting.auto_select %}checked{% endif %}> Automatisch auswählen</label>
+            <small>Letzter verwendeter Provider: {{ provider_labels.get(setting.last_success_provider, '–') }}<br>
+              Letzter Capability-Test: {{ capability.last_checked_at.strftime('%d.%m.%Y, %H:%M') if capability else '–' }}<br>
+              Status: {{ status_labels.get(capability.status, 'noch nicht geprüft') if capability else 'noch nicht geprüft' }}</small>
+          </div>
+        {% endfor %}
+        </div>
+        <button type="submit">Datenquellen speichern</button>
+      </form>
+      <form method="post" action="/stocks/{{ stock.id }}/providers/check" class="capability-check" data-api-action data-wait-text="Datenquellen werden geprüft …">
+        <p>Manuelle Prüfung: bis zu {{ capability_estimate }} API-Aufrufe (bei erfolgreichem Primärprovider weniger).</p>
+        <button type="submit">Datenquellen prüfen</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

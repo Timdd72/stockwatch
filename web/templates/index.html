@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StockWatch – Meine Aktien</title><link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}"></head>
+<body class="dashboard-page"><main class="container dashboard-container">
+  <header class="dashboard-header">
+    <div><p class="eyebrow">StockWatch</p><h1>Meine Aktien</h1></div>
+    <div class="header-actions"><a class="subtle-link" href="/opportunities">Chancen</a><a class="button-link compact-add" href="/securities/search">+ Aktie</a></div>
+  </header>
+
+  <section class="system-strip" aria-label="Systemstatus">
+    <span class="automation-state {{ 'on' if scheduler_enabled else 'off' }}"><i></i> Automatik {{ 'EIN' if scheduler_enabled else 'AUS' }}</span>
+    <span>Nächster Lauf: <strong>{{ scheduler_next_run|berlin_time if scheduler_next_run else '–' }}</strong></span>
+    <span>Alpha Vantage: <strong>{{ usage.alpha_today }}/{{ usage.alpha_limit }}</strong></span>
+    <span>Finnhub: <strong>{{ usage.finnhub_today }}</strong></span>
+    {% if usage.last_error %}<span class="system-warning" title="Ein API-Fehler wurde protokolliert">⚠ Fehler</span>{% endif %}
+    <details class="system-details"><summary>Systemstatus</summary><div>
+      <p><strong>Alpha Vantage:</strong> {{ usage.alpha_today }} / {{ usage.alpha_limit }} heute · {{ usage.alpha_remaining }} verfügbar</p>
+      <p><strong>Finnhub:</strong> {{ usage.finnhub_today }} heute · {{ usage.finnhub_last_minute }} / {{ usage.finnhub_minute_limit }} letzte 60 Sekunden</p>
+      {% if usage.last_success %}<p><strong>Letzter Erfolg:</strong> {{ usage.last_success.provider }} · {{ usage.last_success.timestamp.strftime('%d.%m.%Y, %H:%M') }}</p>{% endif %}
+      {% if usage.last_error %}<p><strong>Letzter Fehler:</strong> {{ usage.last_error.provider }} · {{ usage.last_error.timestamp.strftime('%d.%m.%Y, %H:%M') }}</p>{% endif %}
+      <p><strong>OpenAI:</strong> {{ ai_status.model }} · {{ ai_status.requests }} Analysen · {{ ai_status.tokens }} Tokens · ca. {{ ai_status.estimated_cost_eur|number(4) }} € · Budget {{ ai_status.budget_eur|number }} €</p>
+      <p><a href="/scheduler">Aktualisierungsplan und Einstellungen</a></p>
+    </div></details>
+  </section>
+
+  {% if stocks %}<section class="stock-grid dashboard-stock-grid" aria-label="Überwachte Aktien">
+    {% for item in stocks %}{% set technical = item.technical_snapshot %}
+    <article class="card stock-card compact-stock-card"><a class="stock-card-link" href="/stocks/{{ item.stock.id }}">
+      <div class="stock-card-head"><div><span class="symbol">{{ item.stock.symbol }} · {{ item.stock.exchange }} · {{ item.stock.currency }}</span><h2>{{ item.stock.name }}</h2></div>
+        {% if technical %}<span class="trend compact-trend {{ technical.trend|lower }}">{{ technical.trend }}</span>{% endif %}
+      </div>
+      {% if item.snapshot %}<div class="card-price">{{ item.snapshot.price|number }} {{ item.stock.currency }}</div>{% if item.snapshot.price_type == 'DAILY_CLOSE' %}<small>Schluss {{ item.snapshot.market_timestamp.strftime('%d.%m.') if item.snapshot.market_timestamp else 'Datum unbekannt' }}</small>{% elif item.snapshot.price_type == 'MANUAL' %}<small>Manuell {{ item.snapshot.manual_entered_at|berlin_time }}</small>{% else %}<small>Kurs {{ (item.snapshot.market_timestamp or item.snapshot.fetched_at or item.snapshot.timestamp)|berlin_time }}</small>{% endif %}
+      {% else %}<p class="no-market-data">Noch keine Marktdaten vorhanden</p>{% endif %}
+
+      {% if item.position %}<div class="dashboard-position"><span>Meine Position</span>
+        {% if item.position.profit_loss is not none %}<strong class="{{ item.position.profit_loss|value_class }}">{{ item.position.profit_loss|number }} {{ item.stock.currency }} · {{ item.position.profit_loss_percent|number }} %</strong><small>Wert {{ item.position.current_value|number }} {{ item.stock.currency }}</small>
+        {% else %}<strong class="neutral">Wert noch nicht berechenbar</strong>{% endif %}
+      </div>{% else %}<small class="no-position">Keine aktive Position</small>{% endif %}
+
+      <div class="stock-quick-metrics">
+        <div><span>Trend</span><strong class="{{ technical.trend|lower if technical else 'neutral' }}">{{ technical.trend if technical else '–' }}</strong></div>
+        <div><span>Performance 20 Tage</span><strong class="{{ technical.performance_20d|value_class if technical else 'neutral' }}">{{ technical.performance_20d|number if technical else '–' }}{% if technical and technical.performance_20d is not none %} %{% endif %}</strong></div>
+        {% if technical and technical.rsi14 is not none %}<div><span>RSI14</span><strong>{{ technical.rsi14|number }}</strong></div>{% endif %}
+      </div>
+    </a></article>
+    {% endfor %}
+  </section>{% else %}<p class="empty">Noch keine Aktien überwacht.</p>{% endif %}
+</main></body></html>
