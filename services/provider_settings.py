@@ -154,6 +154,15 @@ class ProviderSettingsService:
                 item.status = status
                 item.last_checked_at = datetime.now(timezone.utc)
 
+    def invalidate_capabilities(self,stock_id:int,provider:str)->int:
+        """Entfernt nur Capability-Ergebnisse der betroffenen Symbolgrundlage."""
+        with self._session_factory.begin() as session:
+            rows=list(session.scalars(select(ProviderCapability).where(
+                ProviderCapability.stock_id==stock_id,
+                ProviderCapability.provider==provider)))
+            for row in rows:session.delete(row)
+            return len(rows)
+
     @staticmethod
     def _defaults(stock: Stock) -> dict[str, tuple[str, str | None]]:
         is_us = stock.currency.upper() == "USD" or "NASDAQ" in stock.exchange.upper()
