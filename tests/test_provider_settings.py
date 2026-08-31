@@ -14,6 +14,7 @@ from database import (
     ApiUsageService,
     SecurityCatalog,
     Stock,
+    StockProviderSymbol,
     create_database,
     create_session_factory,
 )
@@ -37,9 +38,11 @@ class FakeFinnhub:
 class FakeAlpha:
     def __init__(self) -> None:
         self.calls = 0
+        self.symbols = []
 
     def get_daily(self, symbol: str) -> pd.DataFrame:
         self.calls += 1
+        self.symbols.append(symbol)
         return pd.DataFrame({"Close": [100.0, 101.0]}, index=pd.to_datetime(["2026-08-19","2026-08-20"]))
 
 
@@ -153,6 +156,16 @@ class ProviderSettingsTests(unittest.TestCase):
         alpha = FakeAlpha()
         self._updates(finnhub, alpha).update_history(self.us_id)
         self.assertEqual((finnhub.calls, alpha.calls), (0, 1))
+
+    def test_quote_and_history_use_persisted_provider_symbol(self) -> None:
+        with self.sessions.begin() as session:
+            session.add(StockProviderSymbol(stock_id=self.eu_id,provider="alpha_vantage",
+                symbol="MBG.DEX",status="available",source="test"))
+        self.settings.ensure_defaults(self.eu_id)
+        self.settings.update_settings(self.eu_id,{"quote":("alpha_vantage",None,False),"history":("alpha_vantage",None,False)})
+        alpha=FakeAlpha();updates=self._updates(FakeFinnhub(EndpointResult("Kurs","leer",{})),alpha)
+        updates.update_quote(self.eu_id);updates.update_history(self.eu_id)
+        self.assertEqual(alpha.symbols,["MBG.DEX","MBG.DEX"])
 
     def test_airbus_provider_setting_remains_independent(self) -> None:
         self.settings.ensure_defaults(self.eu_id)

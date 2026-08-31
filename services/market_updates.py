@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from analysis import TechnicalIndicators, calculate_technical_indicators
 from database.api_usage import ApiUsageService
 from database.market_data_store import MarketDataStore
-from database.models import NewsItem, ProviderCache, SecurityCatalog, Stock
+from database.models import NewsItem, ProviderCache, SecurityCatalog, Stock,StockProviderSymbol
 from database.service import StockWatchService
 from market_data.alpha_vantage import AlphaVantageError, AlphaVantageProvider
 from market_data.finnhub import EndpointResult, FinnhubError, FinnhubProvider
@@ -59,6 +59,8 @@ class MarketUpdateService:
             stock = session.get(Stock, stock_id)
             if stock is None:
                 raise LookupError("Die Aktie wurde nicht gefunden.")
+            mappings={row.provider:row.symbol for row in session.scalars(select(StockProviderSymbol).where(
+                StockProviderSymbol.stock_id==stock_id,StockProviderSymbol.status=="available"))}
             catalog = session.scalar(
                 select(SecurityCatalog)
                 .where(
@@ -70,8 +72,8 @@ class MarketUpdateService:
                 )
                 .limit(1)
             )
-            alpha = catalog.provider_symbol_alpha_vantage if catalog else None
-            finnhub = catalog.provider_symbol_finnhub if catalog else None
+            alpha = mappings.get("alpha_vantage") or (catalog.provider_symbol_alpha_vantage if catalog else None)
+            finnhub = mappings.get("finnhub") or (catalog.provider_symbol_finnhub if catalog else None)
             if finnhub is None and (
                 "NASDAQ" in stock.exchange.upper()
                 and stock.currency.upper() == "USD"

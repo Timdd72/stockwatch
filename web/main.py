@@ -43,6 +43,7 @@ from services import (
     OpportunityRuntimeConfig,
     ActionAlreadyRunning,
     ActionGuard,
+    ProviderSymbolService,
     TechnicalVerificationRunning,
     SchedulerService,
     StockUpdateService,
@@ -118,6 +119,9 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
     )
     application.state.action_guard = ActionGuard(session_factory)
     application.state.provider_settings_service = ProviderSettingsService(session_factory)
+    application.state.provider_symbol_service = ProviderSymbolService(
+        session_factory,lambda:AlphaVantageProvider.from_env(
+            usage_recorder=application.state.api_usage_service))
     application.state.provider_settings_service.ensure_all_stocks()
     application.state.provider_capability_service = ProviderCapabilityService(
         application.state.provider_settings_service,
@@ -351,6 +355,7 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
             (item.provider, item.data_type): item
             for item in settings_service.capabilities(stock_id)
         }
+        alpha_symbol=request.app.state.provider_symbol_service.get(stock_id,"alpha_vantage")
         return templates.TemplateResponse(
             request=request,
             name="providers.html",
@@ -360,6 +365,7 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
                 "capabilities": capabilities,
                 "provider_options": PROVIDERS,
                 "capability_estimate": request.app.state.provider_capability_service.estimate_requests(stock_id),
+                "alpha_symbol":alpha_symbol,
                 "saved": request.query_params.get("saved") == "1",
                 "checked": request.query_params.get("checked"),
                 "error": request.query_params.get("error"),
@@ -572,6 +578,9 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
             request.app.state.stockwatch_service.set_external_quote_url(
                 stock_id,str(form.get("external_quote_url", ""))
             )
+            if "alpha_vantage_symbol" in form:
+                request.app.state.provider_symbol_service.set_manual(
+                    stock_id,str(form.get("alpha_vantage_symbol", "")))
             url = f"/stocks/{stock_id}/providers?saved=1"
         except (LookupError, ValueError) as exc:
             url = f"/stocks/{stock_id}/providers?error={quote(str(exc))}"
@@ -615,6 +624,7 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
             )
             request.app.state.provider_settings_service.ensure_defaults(stock.id)
             request.app.state.scheduler_service.ensure_defaults(stock.id)
+            request.app.state.provider_symbol_service.resolve_alpha_vantage(stock.id)
             selection = "created" if created else "existing"
             url = (
                 f"/securities/search?selection={selection}&symbol="

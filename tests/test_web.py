@@ -467,6 +467,23 @@ class WebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selected.status_code, 200)
         self.assertIn("GOOGL wurde zu StockWatch hinzugefügt", selected.text)
 
+    async def test_security_selection_invokes_symbol_resolution_and_provider_page_allows_manual_mapping(self) -> None:
+        resolver=self.app.state.provider_symbol_service
+        original=resolver.resolve_alpha_vantage
+        resolver.resolve_alpha_vantage=Mock()
+        factory=create_session_factory(create_database(self.database_path))
+        with factory() as session:
+            security_id=session.scalar(select(SecurityCatalog.id).where(SecurityCatalog.symbol=="GOOGL"))
+        selected=await self.client.post(f"/securities/{security_id}/select",follow_redirects=False)
+        self.assertEqual(selected.status_code,303);resolver.resolve_alpha_vantage.assert_called_once()
+        resolver.resolve_alpha_vantage=original
+        with factory() as session:stock_id=session.scalar(select(Stock.id).where(Stock.symbol=="GOOGL"))
+        saved=await self.client.post(f"/stocks/{stock_id}/providers",data={"alpha_vantage_symbol":"GOOGL"},follow_redirects=False)
+        self.assertEqual(saved.status_code,303)
+        page=await self.client.get(f"/stocks/{stock_id}/providers")
+        self.assertIn("Lokales Symbol",page.text);self.assertIn("Alpha-Vantage-Symbol",page.text)
+        self.assertIn('value="GOOGL"',page.text);self.assertIn("Status: verfügbar",page.text)
+
 
 if __name__ == "__main__":
     unittest.main()

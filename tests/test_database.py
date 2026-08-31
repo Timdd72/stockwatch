@@ -44,6 +44,7 @@ class DatabaseTests(unittest.TestCase):
                 "api_usage",
                 "provider_cache",
                 "stock_provider_settings",
+                "stock_provider_symbols",
                 "provider_capabilities",
                 "company_data",
                 "news_items",

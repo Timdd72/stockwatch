@@ -13,6 +13,7 @@ from .opportunity_news import OpportunityNewsService
 from .opportunity_runtime import OpportunityRuntimeConfig, OpportunityRateGate, OpportunityTimeout
 from .openai_news_scout import OpenAiNewsScoutService, OpenAiScoutResult
 from .action_guard import ActionAlreadyRunning, ActionGuard
+from .provider_symbols import ProviderSymbolService,SymbolResolution
 
 __all__ = [
     "DATA_TYPES",
@@ -46,4 +47,6 @@ __all__ = [
     "OpenAiScoutResult",
     "ActionAlreadyRunning",
     "ActionGuard",
+    "ProviderSymbolService",
+    "SymbolResolution",
 ]

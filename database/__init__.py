@@ -37,6 +37,7 @@ from .models import (
     Stock,
     StockAiAnalysis,
     StockProviderSetting,
+    StockProviderSymbol,
     UpdateSchedule,
 )
 from .repository import StockWatchRepository
@@ -91,6 +92,7 @@ __all__ = [
     "Stock",
     "StockAiAnalysis",
     "StockProviderSetting",
+    "StockProviderSymbol",
     "UpdateSchedule",
     "StockWatchRepository",
     "StockWatchService",

@@ -173,6 +173,20 @@ class StockProviderSetting(Base):
     )
 
 
+class StockProviderSymbol(Base):
+    """Provider-spezifisches Symbol, getrennt vom lokalen Börsensymbol."""
+    __tablename__ = "stock_provider_symbols"
+    __table_args__ = (UniqueConstraint("stock_id","provider",name="uq_stock_provider_symbol"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id"),nullable=False,index=True)
+    provider: Mapped[str] = mapped_column(String(32),nullable=False)
+    symbol: Mapped[str | None] = mapped_column(String(32),nullable=True)
+    status: Mapped[str] = mapped_column(String(32),nullable=False)
+    source: Mapped[str] = mapped_column(String(32),nullable=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),default=utc_now,onupdate=utc_now,nullable=False)
+
+
 class ProviderCapability(Base):
     __tablename__ = "provider_capabilities"
     __table_args__ = (

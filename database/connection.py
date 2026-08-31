@@ -43,6 +43,7 @@ def _apply_lightweight_migrations(engine: Engine) -> None:
     _migrate_opportunity_watchlist(engine)
     _backfill_opportunity_candidate_summaries(engine)
     _migrate_opportunity_status_semantics(engine)
+    _backfill_stock_provider_symbols(engine)
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_manual_action_running ON manual_action_runs(action_key) WHERE status='RUNNING'")
         connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_opportunity_search_running ON opportunity_search_runs(status) WHERE status='RUNNING'")
@@ -249,6 +250,26 @@ def _migrate_opportunity_status_semantics(engine:Engine)->None:
               AND NOT EXISTS (SELECT 1 FROM scanner_candidate_technicals t
                               WHERE t.technical_run_id=scanner_technical_runs.id
                                 AND t.history_provider!='unavailable')
+        """)
+
+
+def _backfill_stock_provider_symbols(engine:Engine)->None:
+    """Übernimmt sichere Katalogmappings und das explizit bekannte MBG-Xetra-Mapping."""
+    tables=set(inspect(engine).get_table_names())
+    if not {"stocks","security_catalog","stock_provider_symbols"}.issubset(tables):return
+    with engine.begin() as connection:
+        connection.exec_driver_sql("""
+            INSERT OR IGNORE INTO stock_provider_symbols
+              (stock_id,provider,symbol,status,source,verified_at,updated_at)
+            SELECT s.id,'alpha_vantage',c.provider_symbol_alpha_vantage,'available','catalog',NULL,CURRENT_TIMESTAMP
+            FROM stocks s JOIN security_catalog c ON upper(c.symbol)=upper(s.symbol)
+            WHERE c.provider_symbol_alpha_vantage IS NOT NULL
+        """)
+        connection.exec_driver_sql("""
+            INSERT OR IGNORE INTO stock_provider_symbols
+              (stock_id,provider,symbol,status,source,verified_at,updated_at)
+            SELECT id,'alpha_vantage','MBG.DEX','available','migration',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
+            FROM stocks WHERE upper(symbol)='MBG' AND upper(exchange) IN ('XETR','XETRA')
         """)
         connection.exec_driver_sql("""
             UPDATE opportunity_search_runs SET status='COMPLETED',phase='COMPLETED',

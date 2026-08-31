@@ -25,6 +25,11 @@
       {% set provider_labels = {'alpha_vantage':'Alpha Vantage','finnhub':'Finnhub','yahoo':'Yahoo (deaktiviert)','none':'Keine'} %}
       {% set status_labels = {'available':'verfügbar','premium_required':'Premium','unavailable':'nicht verfügbar','error':'Fehler'} %}
       <form method="post" action="/stocks/{{ stock.id }}/providers">
+        <div class="provider-symbols">
+          <label>Lokales Symbol<input value="{{ stock.symbol }}" disabled></label>
+          <label>Alpha-Vantage-Symbol<input name="alpha_vantage_symbol" value="{{ alpha_symbol.symbol if alpha_symbol and alpha_symbol.symbol else '' }}" placeholder="z. B. MBG.DEX"></label>
+          <p class="subtitle">Status: {{ 'verfügbar' if alpha_symbol and alpha_symbol.status == 'available' else 'nicht verfügbar' }}. Das lokale Börsensymbol bleibt unverändert.</p>
+        </div>
         <label>Externe Kursseite<input type="url" name="external_quote_url" value="{{ stock.external_quote_url or '' }}" placeholder="https://…"></label><p class="subtitle">Der Link wird nur geöffnet; StockWatch ruft diese Seite nicht automatisch ab.</p>
         <div class="provider-grid">
         {% for setting in provider_settings %}
