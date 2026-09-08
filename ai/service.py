@@ -113,6 +113,7 @@ class StructuredAiRun:
     total_tokens: int
     estimated_cost_eur: Decimal
     web_search_calls: int = 0
+    web_sources: tuple[dict[str, Any], ...] = ()
 
 
 class AiAnalysisService:
@@ -212,7 +213,8 @@ class AiAnalysisService:
                            stock_id: int | None = None,
                            record_usage: bool = True,model:str|None=None,
                            tools:list[dict[str,Any]]|None=None,max_tool_calls:int|None=None,
-                           include:list[str]|None=None) -> StructuredAiRun:
+                           include:list[str]|None=None,
+                           tool_type:str|None=None) -> StructuredAiRun:
         status = self.status()
         if status.estimated_cost_eur >= status.budget_eur:
             raise AiBudgetExceeded(f"Monatliches KI-Budget von {status.budget_eur:.2f} € erreicht.")
@@ -233,14 +235,18 @@ class AiAnalysisService:
             total_tokens = int(getattr(response.usage, "total_tokens", input_tokens + output_tokens) or 0)
             web_calls=sum(1 for item in (getattr(response,"output",None) or [])
                           if getattr(item,"type",None)=="web_search_call")
+            web_sources = _response_web_sources(response)
             cost = self._estimate_cost(input_tokens, output_tokens)+Decimal(web_calls)*self.config.web_search_cost_eur_per_call
             if record_usage:
                 with self._session_factory.begin() as session:
                     session.add(AiUsage(stock_id=stock_id, purpose=purpose, model=model or self.config.model,
                         input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens,
-                        estimated_cost_eur=cost, success=True,tool_type="web_search" if tools else None,
+                        estimated_cost_eur=cost, success=True,
+                        tool_type=tool_type or ("web_search" if tools else None),
                         tool_calls=web_calls))
-            return StructuredAiRun(parsed, input_tokens, output_tokens, total_tokens, cost,web_calls)
+            return StructuredAiRun(
+                parsed, input_tokens, output_tokens, total_tokens, cost, web_calls, web_sources
+            )
         except AiBudgetExceeded:
             raise
         except Exception as exc:
@@ -250,7 +256,7 @@ class AiAnalysisService:
                     session.add(AiUsage(stock_id=stock_id, purpose=purpose, model=model or self.config.model,
                         input_tokens=0, output_tokens=0, total_tokens=0,
                         estimated_cost_eur=Decimal("0"), success=False, error_type=error_type,
-                        tool_type="web_search" if tools else None,tool_calls=0))
+                        tool_type=tool_type or ("web_search" if tools else None),tool_calls=0))
                 raise AiAnalysisError(_friendly_error(error_type)) from None
             # Der bestehende Aktienpfad protokolliert atomar in seinem eigenen Handler.
             raise
@@ -452,3 +458,37 @@ def _friendly_error(error_type: str) -> str:
         "invalid_output": "OpenAI lieferte keine gültige strukturierte Analyse.",
         "network": "OpenAI ist derzeit nicht erreichbar.",
     }.get(error_type, "Die KI-Analyse konnte nicht erstellt werden.")
+
+
+def _response_web_sources(response: Any) -> tuple[dict[str, Any], ...]:
+    """Extrahiert ausschließlich vom Responses-Endpunkt gelieferte Web-Quellen."""
+
+    found: dict[str, dict[str, Any]] = {}
+    for item in getattr(response, "output", None) or []:
+        action = getattr(item, "action", None)
+        for source in getattr(action, "sources", None) or []:
+            _add_response_source(found, source)
+        for content in getattr(item, "content", None) or []:
+            for annotation in getattr(content, "annotations", None) or []:
+                citation = (
+                    annotation.get("url_citation", annotation)
+                    if isinstance(annotation, dict)
+                    else getattr(annotation, "url_citation", None) or annotation
+                )
+                _add_response_source(found, citation)
+    return tuple(found.values())
+
+
+def _add_response_source(target: dict[str, dict[str, Any]], value: Any) -> None:
+    getter = value.get if isinstance(value, dict) else (
+        lambda key, default=None: getattr(value, key, default)
+    )
+    url = getter("url")
+    if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+        return
+    target[url] = {
+        "url": url,
+        "title": getter("title") or url,
+        "publisher": getter("publisher") or getter("domain"),
+        "published_at": getter("published_at"),
+    }

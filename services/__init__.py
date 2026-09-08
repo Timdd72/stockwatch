@@ -1,6 +1,6 @@
 """Anwendungsdienste für manuelle und spätere geplante Abläufe."""
 
-from .market_updates import MarketUpdateError, MarketUpdateService, ProviderSupport
+from .market_updates import AnalysisHistory, MarketUpdateError, MarketUpdateService, ProviderSupport
 from .provider_capabilities import ProviderCapabilityService
 from .provider_settings import DATA_TYPES, PROVIDERS, ProviderSettingsService
 from .scheduler import ScheduleView, SchedulerService
@@ -23,6 +23,7 @@ __all__ = [
     "ProviderSettingsService",
     "ProviderCapabilityService",
     "ProviderSupport",
+    "AnalysisHistory",
     "ScheduleView",
     "SchedulerService",
     "StockUpdateReport",

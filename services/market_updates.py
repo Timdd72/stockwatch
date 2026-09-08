@@ -34,6 +34,15 @@ class ProviderSupport:
     finnhub_symbol: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class AnalysisHistory:
+    history: pd.DataFrame
+    provider: str
+    provider_symbol: str
+    fetched_at: datetime
+    from_cache: bool
+
+
 class MarketUpdateService:
     def __init__(
         self,
@@ -155,15 +164,97 @@ class MarketUpdateService:
             data = self._require_data(result)
             if not isinstance(data, dict) or not data.get("c"):
                 raise MarketUpdateError("Finnhub lieferte keine Historie.")
-            history = pd.DataFrame({
-                "Close": data["c"],
-                "High": data.get("h", data["c"]),
-                "Low": data.get("l", data["c"]),
-            })
+            values = {"Close": data["c"], "High": data.get("h", data["c"]),
+                      "Low": data.get("l", data["c"])}
+            if data.get("o") is not None:
+                values["Open"] = data["o"]
+            if data.get("v") is not None:
+                values["Volume"] = data["v"]
+            history = pd.DataFrame(values)
             if data.get("t"):
                 history.index = pd.to_datetime(data["t"], unit="s", utc=True)
             return history.sort_index()
         raise MarketUpdateError("Provider unterstützt keine Historie.")
+
+    def load_configured_history_for_analysis(
+        self, stock_id: int, *, max_age: timedelta = timedelta(hours=24),
+    ) -> AnalysisHistory | None:
+        """Read-only History-Zugang für Analyse-Assembler über bestehende Provider.
+
+        Die Methode persistiert weder Snapshot noch Capability. Bekannte nicht verfügbare
+        Provider werden übersprungen; Limits und API-Protokollierung bleiben Aufgabe der
+        bereits konfigurierten Providerclients.
+        """
+        setting = self._settings.find_setting(stock_id, "history")
+        if setting is None:
+            return None
+        support = self.support_for_stock(stock_id)
+        providers = [setting.primary_provider]
+        if setting.fallback_provider and setting.fallback_provider not in providers:
+            providers.append(setting.fallback_provider)
+        candidates: list[tuple[str, str]] = []
+        for provider in providers:
+            if provider in ("none", "yahoo"):
+                continue
+            if self._settings.capability_status(stock_id, provider, "history") in (
+                "unavailable", "premium_required",
+            ):
+                continue
+            symbol = self._symbol_for(provider, support)
+            if not symbol:
+                continue
+            candidates.append((provider, symbol))
+        # Erst alle zulässigen Provider-Caches prüfen. So löst ein frischer Fallback-Cache
+        # keinen erneuten, erwartbar erfolglosen Primärprovider-Aufruf aus.
+        for provider, symbol in candidates:
+            cached = self._cached_analysis_history(provider, symbol, max_age)
+            if cached is not None:
+                return cached
+        for provider, symbol in candidates:
+            try:
+                history = self.load_history(provider, symbol)
+                fetched_at = datetime.now(timezone.utc)
+                self._store_analysis_history(provider, symbol, history, fetched_at)
+                return AnalysisHistory(history, provider, symbol, fetched_at, False)
+            except ApiLimitExceeded:
+                raise
+            except (MarketUpdateError, AlphaVantageError, FinnhubError):
+                continue
+        return None
+
+    def _cached_analysis_history(
+        self, provider: str, symbol: str, max_age: timedelta,
+    ) -> AnalysisHistory | None:
+        cutoff = datetime.now(timezone.utc) - max_age
+        with self._session_factory() as session:
+            row = session.scalar(select(ProviderCache).where(
+                ProviderCache.provider == provider,
+                ProviderCache.symbol == symbol,
+                ProviderCache.data_type == "mkr_history",
+                ProviderCache.fetched_at >= cutoff,
+            ))
+            if row is None:
+                return None
+            history = _deserialize_history(row.payload)
+            if history is None:
+                return None
+            return AnalysisHistory(history, provider, symbol, _aware_utc(row.fetched_at), True)
+
+    def _store_analysis_history(
+        self, provider: str, symbol: str, history: pd.DataFrame, fetched_at: datetime,
+    ) -> None:
+        payload = _serialize_history(history)
+        with self._session_factory.begin() as session:
+            row = session.scalar(select(ProviderCache).where(
+                ProviderCache.provider == provider, ProviderCache.symbol == symbol,
+                ProviderCache.data_type == "mkr_history",
+            ))
+            if row is None:
+                session.add(ProviderCache(provider=provider, symbol=symbol,
+                    data_type="mkr_history", fetched_at=fetched_at, payload=payload))
+            else:
+                row.fetched_at = fetched_at
+                row.payload = payload
 
     def update_company_data(self, stock_id: int) -> tuple[int, int]:
         """Aktualisiert langlebigere Datentypen; frische Cachewerte werden geschont."""
@@ -463,3 +554,36 @@ def _epoch_timestamp(value: object) -> datetime | None:
         return datetime.fromtimestamp(float(value), timezone.utc) if value else None
     except (TypeError, ValueError, OSError):
         return None
+
+
+def _serialize_history(history: pd.DataFrame) -> str:
+    frame = history.copy().sort_index()
+    records: list[dict] = []
+    for index, row in frame.iterrows():
+        item = {column: (None if pd.isna(value) else float(value))
+                for column, value in row.items()}
+        item["Date"] = pd.Timestamp(index).isoformat() if isinstance(
+            index, (datetime, pd.Timestamp),
+        ) else None
+        records.append(item)
+    return json.dumps({"records": records}, ensure_ascii=False, separators=(",", ":"))
+
+
+def _deserialize_history(payload: str) -> pd.DataFrame | None:
+    try:
+        records = json.loads(payload).get("records")
+        if not isinstance(records, list) or not records:
+            return None
+        frame = pd.DataFrame(records)
+        if "Date" in frame and frame["Date"].notna().all():
+            frame.index = pd.to_datetime(frame.pop("Date"), utc=True)
+            frame.index.name = "Date"
+        elif "Date" in frame:
+            frame = frame.drop(columns=["Date"])
+        return frame.sort_index()
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _aware_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)

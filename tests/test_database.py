@@ -55,6 +55,8 @@ class DatabaseTests(unittest.TestCase):
                 "scheduler_runs",
                 "ai_usage",
                 "stock_ai_analysis",
+                "mkr_analyses",
+                "mkr_analysis_sources",
                 "ai_news_assessments",
                 "scanner_runs",
                 "scanner_candidates",

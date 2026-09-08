@@ -370,6 +370,60 @@ class StockAiAnalysis(Base):
     input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
 
 
+class MkrAnalysisRecord(Base):
+    """Persistierter Lauf der zusätzlichen, versionierten MKR-14-Analyse."""
+
+    __tablename__ = "mkr_analyses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id"), nullable=False, index=True)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    current_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    quote_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    structured_result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    confidence: Mapped[int | None] = mapped_column(nullable=True)
+    data_coverage_full: Mapped[int | None] = mapped_column(nullable=True)
+    data_coverage_limited: Mapped[int | None] = mapped_column(nullable=True)
+    data_coverage_unavailable: Mapped[int | None] = mapped_column(nullable=True)
+    web_search_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    web_search_calls: Mapped[int] = mapped_column(default=0, nullable=False)
+    error_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class MkrAnalysisSource(Base):
+    """Normalisierte, tatsächlich vom Responses-Webtool gelieferte MKR-Quelle."""
+
+    __tablename__ = "mkr_analysis_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "mkr_analysis_id", "framework_number", "url",
+            name="uq_mkr_analysis_framework_source",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mkr_analysis_id: Mapped[int] = mapped_column(
+        ForeignKey("mkr_analyses.id"), nullable=False, index=True
+    )
+    framework_number: Mapped[int] = mapped_column(nullable=False)
+    source_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    publisher: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    usage_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
 class AiNewsAssessment(Base):
     __tablename__ = "ai_news_assessments"
     __table_args__ = (

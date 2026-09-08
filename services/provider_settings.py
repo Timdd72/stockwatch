@@ -72,6 +72,16 @@ class ProviderSettingsService:
             item for item in self.get_settings(stock_id) if item.data_type == data_type
         )
 
+    def find_setting(self, stock_id: int, data_type: str) -> StockProviderSetting | None:
+        """Liest eine vorhandene Einstellung, ohne dabei Defaults anzulegen."""
+        if data_type not in DATA_TYPES:
+            raise ValueError("Unbekannter Datentyp.")
+        with self._session_factory() as session:
+            return session.scalar(select(StockProviderSetting).where(
+                StockProviderSetting.stock_id == stock_id,
+                StockProviderSetting.data_type == data_type,
+            ))
+
     def update_settings(
         self, stock_id: int, values: dict[str, tuple[str, str | None, bool]]
     ) -> None:

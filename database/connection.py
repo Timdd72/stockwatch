@@ -47,6 +47,7 @@ def _apply_lightweight_migrations(engine: Engine) -> None:
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_manual_action_running ON manual_action_runs(action_key) WHERE status='RUNNING'")
         connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_opportunity_search_running ON opportunity_search_runs(status) WHERE status='RUNNING'")
+        connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS uq_mkr_analysis_stock_running ON mkr_analyses(stock_id) WHERE status='RUNNING'")
 
 
 def _migrate_stock_ai_analysis(engine: Engine) -> None:
