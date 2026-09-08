@@ -239,6 +239,9 @@ class WebTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('<section class="api-usage card">', response.text)
         self.assertIn("Automatik AUS", response.text)
         self.assertIn("Systemstatus", response.text)
+        self.assertIn('alt="Conny AI – Börsenmaklerin für StockWatch"', response.text)
+        self.assertIn('src="data:image/webp;base64,', response.text)
+        self.assertIn('class="conny-assistant"', response.text)
 
     async def test_update_buttons_target_the_requested_stock(self) -> None:
         with create_session_factory(create_database(self.database_path))() as session:

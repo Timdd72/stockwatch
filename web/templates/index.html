@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>StockWatch – Meine Aktien</title><link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}"></head>
-<body class="dashboard-page"><main class="container dashboard-container">
+<body class="dashboard-page"><main class="container dashboard-container"><div class="dashboard-shell"><div class="dashboard-main">
   <header class="dashboard-header">
     <div><p class="eyebrow">StockWatch</p><h1>Meine Aktien</h1></div>
     <div class="header-actions"><a class="subtle-link" href="/opportunities">Chancen</a><a class="button-link compact-add" href="/securities/search">+ Aktie</a></div>
@@ -45,4 +45,5 @@
     </a></article>
     {% endfor %}
   </section>{% else %}<p class="empty">Noch keine Aktien überwacht.</p>{% endif %}
+</div><aside class="conny-assistant" aria-label="Conny AI"><figure><img src="{{ conny_image_data_url }}" width="800" height="1279" alt="Conny AI – Börsenmaklerin für StockWatch"><figcaption><strong>Conny AI</strong><span>Deine Börsenmaklerin für StockWatch</span></figcaption></figure></aside></div>
 </main></body></html>

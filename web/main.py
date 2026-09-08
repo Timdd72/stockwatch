@@ -48,6 +48,7 @@ from services import (
     SchedulerService,
     StockUpdateService,
 )
+from web.assets import CONNY_IMAGE_DATA_URL
 
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -158,6 +159,7 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
                 "scheduler_enabled": request.app.state.scheduler_service.master_enabled(),
                 "scheduler_next_run": request.app.state.scheduler_service.next_run(),
                 "ai_status": request.app.state.ai_analysis_service.status(),
+                "conny_image_data_url": CONNY_IMAGE_DATA_URL,
             },
         )
 
