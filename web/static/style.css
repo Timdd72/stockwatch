@@ -138,6 +138,16 @@ button { width: 100%; border: 0; border-radius: 7px; padding: 12px; background: 
 .quick-update { min-width: 145px; }
 .quick-update button { width: auto; padding: 9px 14px; }
 .quick-update small { max-width: 170px; margin-top: 4px; font-size: .72rem; }
+.manual-quote { padding: 13px 16px; margin-bottom: 10px; }
+.manual-quote h2 { margin-bottom: 8px; font-size: 1rem; }
+.manual-quote-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 18px; }
+.manual-price-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; }
+.manual-price-form label { display: flex; align-items: center; justify-self: center; gap: 8px; margin: 0; color: var(--muted); font-size: .78rem; }
+.manual-price-input { display: flex; align-items: center; gap: 7px; }
+.manual-price-input input { width: 210px; margin: 0; padding: 8px 10px; }
+.manual-price-input b { color: var(--text); font-size: .9rem; }
+.manual-price-form button { width: auto; padding: 9px 14px; white-space: nowrap; }
+.manual-quote-row > .button-link { white-space: nowrap; }
 .key-metrics { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
 .key-metrics > div { min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
 .key-metrics strong { display: block; margin-top: 4px; font-size: .98rem; overflow-wrap: anywhere; }
@@ -168,6 +178,10 @@ button { width: 100%; border: 0; border-radius: 7px; padding: 12px; background: 
   .primary-overview, .key-metrics, .secondary-grid, .api-details, .compact-form { grid-template-columns: 1fr; }
   .primary-overview { gap: 12px; }
   .quick-update { grid-column: auto; }
+  .manual-quote-row { align-items: flex-start; }
+  .manual-quote-row, .manual-price-form { display: flex; flex-wrap: wrap; }
+  .manual-price-form label { flex-wrap: wrap; justify-content: flex-start; }
+  .manual-price-input input { width: min(210px, calc(100vw - 150px)); min-width: 150px; }
 }
 
 /* Kompaktes Multi-Aktien-Dashboard. */
