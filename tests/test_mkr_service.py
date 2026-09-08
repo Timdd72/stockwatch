@@ -298,6 +298,34 @@ class MkrServiceTests(unittest.TestCase):
             [("PRICE", "EUR"), ("PRICE", "EUR")],
         )
 
+    def test_absolute_quantities_are_not_currency_prices(self) -> None:
+        levels = [
+            {"value": 1_250_000, "level_type": "PRICE", "currency": "EUR",
+             "basis": "Absolutes Handelsvolumen"},
+            {"value": 718_525, "level_type": "PRICE", "currency": "EUR",
+             "basis": "20-Tage-Volumendurchschnitt"},
+            {"value": 820, "level_type": "PRICE", "currency": "EUR",
+             "basis": "Bestellungen / Orders"},
+            {"value": 766, "level_type": "PRICE", "currency": "EUR",
+             "basis": "Ausgelieferte Flugzeuge / Deliveries"},
+            {"value": 3.01, "level_type": "PRICE", "currency": "EUR",
+             "basis": "Volumenabweichung +3,01 % zum Durchschnitt"},
+            {"value": 199.46, "level_type": "INDICATOR", "currency": None,
+             "basis": "Aktueller Kurs"},
+            {"value": 37.37, "level_type": "PRICE", "currency": "EUR",
+             "basis": "RSI14"},
+        ]
+        _normalize_levels(levels, "EUR", 6)
+        self.assertEqual(
+            [(item["level_type"], item["currency"]) for item in levels],
+            [
+                ("QUANTITY", None), ("QUANTITY", None),
+                ("QUANTITY", None), ("QUANTITY", None),
+                ("PERCENTAGE", None), ("PRICE", "EUR"),
+                ("INDICATOR", None),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

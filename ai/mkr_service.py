@@ -435,10 +435,26 @@ def _normalize_levels(levels: list[dict], currency: str, framework_number: int) 
             level_type = "INDICATOR"
         elif framework_number == 4:
             level_type = "INDICATOR"
+        elif _is_quantity_basis(basis):
+            level_type = "QUANTITY"
         else:
             level_type = "PRICE"
         level["level_type"] = level_type
         level["currency"] = currency if level_type == "PRICE" else None
+
+
+def _is_quantity_basis(basis: str) -> bool:
+    """Erkennt eindeutig absolute Mengen, nicht monetäre Volumina oder Quoten."""
+
+    if re.search(r"\b(?:eur|usd|gbp|chf|jpy)\b|[€$£¥]|\b(?:umsatz|erlös|revenue)\b", basis):
+        return False
+    return re.search(
+        r"\b(?:handelsvolumen|daily[-\s]?volumen|volumendurchschnitt|"
+        r"durchschnittliches?\s+(?:handels)?volumen|volumen|"
+        r"orders?|bestellungen?|auftragszahl|auftragseingang|auftragsbestand|"
+        r"deliveries|auslieferungen?|stückzahl|stücke?|anzahl|shares?|aktien|flugzeuge?)\b",
+        basis,
+    ) is not None
 
 
 def _correct_deterministic_relationships(

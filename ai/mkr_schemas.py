@@ -33,6 +33,7 @@ class MkrLevelType(str, Enum):
     INDICATOR = "INDICATOR"
     PERCENTAGE = "PERCENTAGE"
     RATIO = "RATIO"
+    QUANTITY = "QUANTITY"
 
 
 class MkrDataOrigin(str, Enum):
