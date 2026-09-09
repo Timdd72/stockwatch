@@ -14,6 +14,7 @@ from .opportunity_runtime import OpportunityRuntimeConfig, OpportunityRateGate, 
 from .openai_news_scout import OpenAiNewsScoutService, OpenAiScoutResult
 from .action_guard import ActionAlreadyRunning, ActionGuard
 from .provider_symbols import ProviderSymbolService,SymbolResolution
+from .decision_engine import DecisionAction, DecisionEngine, DecisionInput, DecisionPerspective, DecisionResult, DecisionWeights, PerspectiveResult, Signal
 
 __all__ = [
     "DATA_TYPES",
@@ -50,4 +51,12 @@ __all__ = [
     "ActionGuard",
     "ProviderSymbolService",
     "SymbolResolution",
+    "DecisionAction",
+    "DecisionEngine",
+    "DecisionInput",
+    "DecisionPerspective",
+    "DecisionResult",
+    "DecisionWeights",
+    "PerspectiveResult",
+    "Signal",
 ]
