@@ -1,9 +1,9 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{ dashboard.stock.name }} – StockWatch</title><link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}"><script src="{{ url_for('static', path='/action-state.js') }}" defer></script></head>
-<body class="stock-detail-page"><main class="container detail-container">
+<title>{{ dashboard.stock.name }} – StockWatch</title><link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}"><script src="{{ url_for('static', path='/action-state.js') }}" defer></script><script src="{{ url_for('static', path='/price-chart.js') }}" defer></script></head>
+<body class="stock-detail-page"><main class="container detail-container">{% set s = dashboard.technical_snapshot %}{% set p = dashboard.position %}
   <header class="compact-header">
-    <div class="compact-nav"><a class="back-link" href="/">← Meine Aktien</a><a class="subtle-link" href="/stocks/{{ dashboard.stock.id }}/providers">Einstellungen</a></div>
+    <div class="compact-nav"><a class="back-link" href="/">← Meine Aktien</a><details class="hamburger-menu"><summary aria-label="Verwaltungsmenü">☰</summary><div class="hamburger-panel"><a href="/stocks/{{ dashboard.stock.id }}/providers">Einstellungen</a><span>Position verwalten</span>{% if p %}<dl class="compact-position"><div><dt>Kaufpreis</dt><dd>{{ p.position.purchase_price|number }} {{ dashboard.stock.currency }}</dd></div><div><dt>Stückzahl</dt><dd>{{ p.position.quantity|number(6) }}</dd></div><div><dt>Kaufdatum</dt><dd>{{ p.position.purchase_date.strftime('%d.%m.%Y') }}</dd></div><div><dt>Investierter Betrag</dt><dd>{{ p.invested_amount|number }} {{ dashboard.stock.currency }}</dd></div><div><dt>Aktueller Positionswert</dt><dd>{{ p.current_value|number }} {{ dashboard.stock.currency if p.current_value is not none else '' }}</dd></div></dl>{% else %}<form class="compact-form" method="post" action="/stocks/{{ dashboard.stock.id }}/positions"><label>Kaufpreis<input name="purchase_price" inputmode="decimal" required value="{{ form.get('purchase_price', '') }}"></label><label>Stückzahl<input name="quantity" inputmode="decimal" required value="{{ form.get('quantity', '') }}"></label><label>Kaufdatum<input name="purchase_date" type="date" required value="{{ form.get('purchase_date', '') }}"></label><button class="primary-action" type="submit">Position speichern</button></form>{% endif %}</div></details></div>
     <div class="title-line"><div><p class="eyebrow">{{ dashboard.stock.symbol }}</p><h1>{{ dashboard.stock.name }}</h1></div><p class="subtitle">{{ dashboard.stock.exchange }} · {{ dashboard.stock.currency }}</p></div>
   </header>
   {% if created %}<p class="notice success compact-notice">Position wurde angelegt.</p>{% endif %}
@@ -25,13 +25,13 @@
       </details>
     </div>
   {% endif %}
-  {% set s = dashboard.technical_snapshot %}{% set p = dashboard.position %}
   <section class="primary-overview card">
     <div class="price-primary"><span>{% if dashboard.snapshot and dashboard.snapshot.price_type == 'DAILY_CLOSE' %}Letzter verfügbarer Schlusskurs{% elif dashboard.snapshot and dashboard.snapshot.price_type == 'MANUAL' %}Manuell eingetragener Kurs{% else %}Letzter Kurs{% endif %}</span>{% if dashboard.snapshot %}<strong>{{ dashboard.snapshot.price|number }} {{ dashboard.stock.currency }}</strong>{% if dashboard.snapshot.price_type == 'DAILY_CLOSE' %}<small>Schlusskurs vom {{ dashboard.snapshot.market_timestamp.strftime('%d.%m.%Y') if dashboard.snapshot.market_timestamp else 'unbekannten Börsentag' }}{% if dashboard.snapshot.provider %} · Quelle: {{ 'Alpha Vantage' if dashboard.snapshot.provider == 'alpha_vantage' else dashboard.snapshot.provider }}{% endif %}</small>{% elif dashboard.snapshot.price_type == 'MANUAL' %}<small>manuell aktualisiert {{ dashboard.snapshot.manual_entered_at|berlin_time }}</small>{% else %}<small>{{ (dashboard.snapshot.market_timestamp or dashboard.snapshot.fetched_at or dashboard.snapshot.timestamp)|berlin_time }}{% if dashboard.snapshot.price_type == 'DELAYED' %} · verzögert{% endif %}</small>{% endif %}{% else %}<strong class="no-market-data">Noch keine Marktdaten vorhanden</strong>{% endif %}</div>
     {% if p %}<div class="position-primary"><span>Gewinn / Verlust</span><strong class="{{ p.profit_loss|value_class }}">{{ p.profit_loss|number }} {{ dashboard.stock.currency if p.profit_loss is not none else '' }}</strong><small class="{{ p.profit_loss_percent|value_class }}">{{ p.profit_loss_percent|number }} % · Kauf {{ p.position.purchase_price|number }} · {{ p.position.quantity|number(6) }} Stück</small></div>{% else %}<div class="position-primary"><span>Position</span><strong class="neutral">Keine aktive Position</strong></div>{% endif %}
-    <form class="quick-update" method="post" action="/stocks/{{ dashboard.stock.id }}/update" data-api-action data-wait-text="Aktie wird aktualisiert …"><button type="submit">Jetzt aktualisieren</button><small>Aktualisiert automatisch nur veraltete Daten.</small></form>
+    <form class="quick-update" method="post" action="/stocks/{{ dashboard.stock.id }}/update" data-api-action data-wait-text="Aktie wird aktualisiert …"><button class="primary-action" type="submit">Jetzt aktualisieren</button><small>Aktualisiert automatisch nur veraltete Daten.</small></form>
   </section>
-  {% if manual_quote_enabled %}<section class="card manual-quote"><h2>Kurs manuell aktualisieren</h2><div class="manual-quote-row">{% if dashboard.stock.external_quote_url %}<a class="button-link secondary-button" href="{{ dashboard.stock.external_quote_url }}" target="_blank" rel="noopener noreferrer">Kurs extern prüfen</a>{% endif %}<form class="manual-price-form" method="post" action="/stocks/{{ dashboard.stock.id }}/manual-price"><label><span>Manueller Kurs:</span><span class="manual-price-input"><input name="manual_price" inputmode="decimal" placeholder="206,10" value="{{ form.get('manual_price','') }}" required><b>{{ dashboard.stock.currency }}</b></span></label><button type="submit">Speichern</button></form></div></section>{% endif %}
+  {% if chart_points|length > 1 %}<section class="card price-chart-section" aria-labelledby="chart-title"><div class="section-heading"><h2 id="chart-title">Kursverlauf</h2><span>{{ chart_points|length }} gespeicherte Punkte</span></div><div class="chart-controls">{% for period in chart_periods %}<button class="subtle-action{% if loop.last %} active{% endif %}" type="button" data-chart-range="{% if period == '1M' %}30{% elif period == '3M' %}90{% elif period == '6M' %}180{% elif period == '1J' %}365{% else %}Max{% endif %}">{{ period }}</button>{% endfor %}</div><div class="price-chart" data-price-chart data-points-id="chart-data"{% if position_purchase_price is not none %} data-purchase-price="{{ position_purchase_price }}"{% endif %}><div class="chart-axis"><span data-chart-max>–</span><span data-chart-min>–</span></div><svg role="img" aria-label="Gespeicherter Kursverlauf"><polyline data-chart-line fill="none" stroke="currentColor" stroke-width="2" points=""></polyline><line data-purchase-line x1="0" x2="0" y1="0" y2="0" stroke="#b17d00" stroke-width="1" stroke-dasharray="4 3" hidden></line></svg><div class="chart-labels" data-chart-labels>–</div></div><script type="application/json" id="chart-data">{{ chart_points|tojson }}</script>{% if position_purchase_price is not none %}<small class="chart-purchase">Kaufkurs: {{ position_purchase_price|number }} {{ dashboard.stock.currency }}</small>{% endif %}</section>{% else %}<section class="card price-chart-section chart-empty"><h2>Kursverlauf</h2><p>Noch keine ausreichenden historischen Kursdaten vorhanden.</p></section>{% endif %}
+  {% if manual_quote_enabled %}<section class="card manual-quote"><h2>Kurs manuell aktualisieren</h2><div class="manual-quote-row">{% if dashboard.stock.external_quote_url %}<a class="button-link secondary-button" href="{{ dashboard.stock.external_quote_url }}" target="_blank" rel="noopener noreferrer">Kurs extern prüfen</a>{% endif %}<form class="manual-price-form" method="post" action="/stocks/{{ dashboard.stock.id }}/manual-price"><label><span>Manueller Kurs:</span><span class="manual-price-input"><input name="manual_price" inputmode="decimal" placeholder="206,10" value="{{ form.get('manual_price','') }}" required><b>{{ dashboard.stock.currency }}</b></span></label><button class="secondary-action" type="submit">Speichern</button></form></div></section>{% endif %}
   <section class="ai-assessment card" aria-label="StockWatch Einschätzung">
     <div class="ai-heading"><div><span>StockWatch Einschätzung</span>{% if not ai_analysis %}<strong>Noch keine KI-Analyse vorhanden.</strong>{% endif %}</div></div>
     {% if ai_analysis %}
@@ -85,7 +85,9 @@
     </div>
 
     {% if mkr_result %}
-      <div class="mkr-scorecard" aria-label="MKR Scorecard">
+      {% set counts = namespace(bullish=0, neutral=0, bearish=0, unavailable=0) %}{% for framework in mkr_result.frameworks %}{% if framework.signal.value == 'BULLISH' %}{% set counts.bullish = counts.bullish + 1 %}{% elif framework.signal.value == 'BEARISH' %}{% set counts.bearish = counts.bearish + 1 %}{% elif framework.signal.value == 'NOT_AVAILABLE' %}{% set counts.unavailable = counts.unavailable + 1 %}{% else %}{% set counts.neutral = counts.neutral + 1 %}{% endif %}{% endfor %}
+      <div class="mkr-summary-strip"><span>BULLISH <strong>{{ counts.bullish }}</strong></span><span>NEUTRAL <strong>{{ counts.neutral }}</strong></span><span>BEARISH <strong>{{ counts.bearish }}</strong></span><span>N/V <strong>{{ counts.unavailable }}</strong></span></div>
+      <details class="mkr-all-details"><summary>Alle 14 Frameworks anzeigen</summary><div class="mkr-scorecard" aria-label="MKR Scorecard">
         <div class="mkr-scorecard-head"><span>Nr.</span><span>Framework</span><span>Signal</span><span>Confidence</span><span>Qualität</span><span>Herkunft</span></div>
         {% for framework in mkr_result.frameworks %}
           <details class="mkr-framework">
@@ -104,17 +106,16 @@
             </div>
           </details>
         {% endfor %}
-      </div>
+      </div></details>
 
       <div class="mkr-summary">
         <h3>Zusammenfassung</h3>
         <ol>{% for sentence in mkr_result.summary %}<li>{{ sentence }}</li>{% endfor %}</ol>
       </div>
 
-      <div class="mkr-sources">
-        <h3>Quellen</h3>
+      <details class="mkr-sources"><summary>Quellen ({{ mkr_sources|length }})</summary>
         {% if mkr_sources %}<ul>{% for source in mkr_sources %}<li><span>Framework {{ source.framework_number }}</span><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.title }}</a>{% if source.publisher %}<small>{{ source.publisher }}</small>{% endif %}{% if source.published_at %}<small>{{ source.published_at|berlin_time }}</small>{% endif %}</li>{% endfor %}</ul>{% else %}<p>Keine externen Quellen gespeichert.</p>{% endif %}
-      </div>
+      </details>
     {% elif mkr_analysis and not mkr_result %}
       <p class="notice error compact-notice">Das gespeicherte MKR-Ergebnis konnte nicht dargestellt werden.</p>
     {% endif %}
@@ -132,10 +133,5 @@
       <div><strong>Alpha Vantage:</strong> {{ usage.alpha_today }} / {{ usage.alpha_limit }} heute · {{ usage.alpha_remaining }} verfügbar</div><div><strong>Finnhub:</strong> {{ usage.finnhub_today }} heute · {{ usage.finnhub_last_minute }} / {{ usage.finnhub_minute_limit }} letzte 60 Sekunden</div>
       <div><strong>Letzter Erfolg:</strong> {% if usage.last_success %}{{ usage.last_success.provider }} · {{ usage.last_success.endpoint }} · {{ usage.last_success.timestamp.strftime('%d.%m.%Y, %H:%M') }}{% else %}–{% endif %}</div><div><strong>Letzter Fehler:</strong> {% if usage.last_error %}{{ usage.last_error.provider }} · {{ usage.last_error.error_type or 'Fehler' }} · {{ usage.last_error.timestamp.strftime('%d.%m.%Y, %H:%M') }}{% else %}–{% endif %}</div>
     </div></details>
-    <details class="card detail-panel"><summary>Position verwalten</summary>
-      {% if p %}<dl class="compact-position"><div><dt>Kaufpreis</dt><dd>{{ p.position.purchase_price|number }} {{ dashboard.stock.currency }}</dd></div><div><dt>Stückzahl</dt><dd>{{ p.position.quantity|number(6) }}</dd></div><div><dt>Kaufdatum</dt><dd>{{ p.position.purchase_date.strftime('%d.%m.%Y') }}</dd></div><div><dt>Investierter Betrag</dt><dd>{{ p.invested_amount|number }} {{ dashboard.stock.currency }}</dd></div><div><dt>Aktueller Positionswert</dt><dd>{{ p.current_value|number }} {{ dashboard.stock.currency if p.current_value is not none else '' }}</dd></div></dl>{% endif %}
-      {% if not p %}<form class="compact-form" method="post" action="/stocks/{{ dashboard.stock.id }}/positions"><label>Kaufpreis<input name="purchase_price" inputmode="decimal" required value="{{ form.get('purchase_price', '') }}"></label><label>Stückzahl<input name="quantity" inputmode="decimal" required value="{{ form.get('quantity', '') }}"></label><label>Kaufdatum<input name="purchase_date" type="date" required value="{{ form.get('purchase_date', '') }}"></label><button type="submit">Position speichern</button></form>{% endif %}
-    </details>
-    <details class="card detail-panel"><summary>Einstellungen</summary><p><a href="/stocks/{{ dashboard.stock.id }}/providers">Datenquelle wählen</a></p></details>
   </section>
 </main></body></html>

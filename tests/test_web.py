@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import tempfile
 import unittest
+import json
 from unittest.mock import Mock, patch
 
 from httpx2 import ASGITransport, AsyncClient
@@ -16,6 +17,7 @@ from sqlalchemy import select
 from analysis import TechnicalIndicators
 from database import (
     MkrAnalysisRecord,
+    ProviderCache,
     Position,
     Stock,
     StockAiAnalysis,
@@ -183,7 +185,30 @@ class WebTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("MKR-Analyse", response.text)
         self.assertIn("Für diese Aktie liegt noch keine MKR-Analyse vor.", response.text)
         self.assertIn("MKR-Analyse starten", response.text)
+        self.assertIn("Noch keine ausreichenden historischen Kursdaten vorhanden.", response.text)
         mkr.analyze.assert_not_called()
+        network.assert_not_called()
+
+    async def test_stock_detail_chart_uses_only_local_history_cache(self) -> None:
+        with create_session_factory(create_database(self.database_path)).begin() as session:
+            airbus_id = session.scalar(select(Stock.id).where(Stock.symbol == "AIR.PAR"))
+            records = [{"Date": f"2026-08-{day:02d}T00:00:00+00:00", "Close": 190 + day}
+                       for day in range(1, 11)]
+            session.add(ProviderCache(
+                provider="alpha_vantage", symbol="AIR.PAR", data_type="mkr_history",
+                fetched_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+                payload=json.dumps({"records": records}),
+            ))
+
+        with patch("requests.sessions.Session.get") as network:
+            response = await self.client.get(f"/stocks/{airbus_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Kursverlauf", response.text)
+        self.assertIn("gespeicherte Punkte", response.text)
+        self.assertIn('data-price-chart', response.text)
+        self.assertIn('data-chart-range="Max"', response.text)
+        self.assertIn("price-chart.js", response.text)
         network.assert_not_called()
 
     async def test_stock_detail_renders_completed_mkr_scorecard_levels_and_sources(self) -> None:

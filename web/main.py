@@ -57,6 +57,7 @@ from services import (
     StockUpdateService,
 )
 from web.assets import CONNY_IMAGE_DATA_URL
+from database.models import ProviderCache, Stock, StockProviderSymbol
 
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -87,6 +88,58 @@ def berlin_time(value: object) -> str:
         return "–"
     aware = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     return aware.astimezone(ZoneInfo("Europe/Berlin")).strftime("%d.%m.%Y, %H:%M")
+
+
+def _chart_history(session_factory, stock_id: int, snapshot) -> tuple[list[dict], list[str]]:
+    """Read chart points exclusively from the local history cache/snapshot."""
+    with session_factory() as session:
+        stock_symbol = session.scalar(select(Stock.symbol).where(Stock.id == stock_id))
+        symbols = {stock_symbol} if stock_symbol else set()
+        symbols.update(item.symbol for item in session.scalars(
+            select(StockProviderSymbol).where(StockProviderSymbol.stock_id == stock_id)
+        ) if item.symbol)
+        rows = list(session.scalars(select(ProviderCache).where(
+            ProviderCache.symbol.in_(symbols),
+            ProviderCache.data_type.in_(("mkr_history", "scanner_history")),
+        ).order_by(ProviderCache.fetched_at.desc()).limit(5))) if symbols else []
+    points_by_date: dict[str, dict] = {}
+    for row in rows:
+        try:
+            records = json.loads(row.payload).get("records", [])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        for item in records if isinstance(records, list) else []:
+            try:
+                day = str(item.get("Date", ""))[:10]
+                close = float(item["Close"])
+                if day and close == close:
+                    points_by_date.setdefault(day, {"date": day, "close": close})
+            except (KeyError, TypeError, ValueError):
+                continue
+        if points_by_date:
+            break
+    if snapshot is not None and snapshot.price is not None:
+        stamp = snapshot.market_timestamp or snapshot.fetched_at or snapshot.timestamp
+        if stamp is not None:
+            day = stamp.date().isoformat()
+            points_by_date.setdefault(day, {"date": day, "close": float(snapshot.price)})
+    points = [points_by_date[key] for key in sorted(points_by_date)]
+    if not points:
+        return [], []
+    from datetime import date as date_type
+    first = date_type.fromisoformat(points[0]["date"])
+    last = date_type.fromisoformat(points[-1]["date"])
+    span = (last - first).days
+    periods = ["Max"]
+    if span >= 30:
+        periods.insert(0, "1M")
+    if span >= 90:
+        periods.insert(1 if "1M" in periods else 0, "3M")
+    if span >= 180:
+        periods.insert(-1, "6M")
+    if span >= 365:
+        periods.insert(-1, "1J")
+    return points, periods
 
 
 templates.env.filters["number"] = number
@@ -332,6 +385,11 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
         if data is None:
             raise HTTPException(status_code=404, detail="Aktie nicht gefunden")
         settings_service = request.app.state.provider_settings_service
+        chart_points, chart_periods = _chart_history(
+            session_factory,
+            stock_id,
+            data.snapshot,
+        )
         mkr_service = request.app.state.mkr_analysis_service
         mkr_latest = mkr_service.get_latest(stock_id)
         mkr_analysis = mkr_service.get_latest_successful(stock_id)
@@ -367,6 +425,9 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
                 "mkr_sources": mkr_service.get_sources(mkr_analysis.id) if mkr_analysis else [],
                 "mkr_message": request.query_params.get("mkr_message"),
                 "mkr_error": request.query_params.get("mkr_error"),
+                "chart_points": chart_points,
+                "chart_periods": chart_periods,
+                "position_purchase_price": float(data.position.position.purchase_price) if data.position else None,
                 "manual_quote_enabled": data.stock.currency.upper() != "USD" and "NASDAQ" not in data.stock.exchange.upper(),
             },
             status_code=status_code,
