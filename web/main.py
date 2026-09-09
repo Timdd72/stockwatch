@@ -14,7 +14,15 @@ from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from ai import AiAnalysisError, AiAnalysisService, AiBudgetExceeded
+from ai import (
+    AiAnalysisError,
+    AiAnalysisService,
+    AiBudgetExceeded,
+    MkrAnalysisAlreadyRunning,
+    MkrAnalysisFailed,
+    MkrAnalysisService,
+    MkrInputAssembler,
+)
 
 from database import (
     DEFAULT_DATABASE_PATH,
@@ -95,6 +103,14 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
     application.state.ai_analysis_service = AiAnalysisService(session_factory)
     application.state.market_update_service = MarketUpdateService(
         session_factory, application.state.api_usage_service
+    )
+    application.state.mkr_analysis_service = MkrAnalysisService(
+        session_factory,
+        MkrInputAssembler(
+            session_factory,
+            history_loader=application.state.market_update_service.load_configured_history_for_analysis,
+        ),
+        application.state.ai_analysis_service,
     )
     application.state.stock_update_service = StockUpdateService(
         session_factory, application.state.market_update_service
@@ -316,6 +332,13 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
         if data is None:
             raise HTTPException(status_code=404, detail="Aktie nicht gefunden")
         settings_service = request.app.state.provider_settings_service
+        mkr_service = request.app.state.mkr_analysis_service
+        mkr_latest = mkr_service.get_latest(stock_id)
+        mkr_analysis = mkr_service.get_latest_successful(stock_id)
+        try:
+            mkr_result = mkr_service.load_result(mkr_analysis) if mkr_analysis else None
+        except ValueError:
+            mkr_result = None
         return templates.TemplateResponse(
             request=request,
             name="stock_detail.html",
@@ -338,6 +361,12 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
                 "ai_message": request.query_params.get("ai_message"),
                 "ai_error": request.query_params.get("ai_error"),
                 "ai_rating_labels": AI_RATING_LABELS,
+                "mkr_latest": mkr_latest,
+                "mkr_analysis": mkr_analysis,
+                "mkr_result": mkr_result,
+                "mkr_sources": mkr_service.get_sources(mkr_analysis.id) if mkr_analysis else [],
+                "mkr_message": request.query_params.get("mkr_message"),
+                "mkr_error": request.query_params.get("mkr_error"),
                 "manual_quote_enabled": data.stock.currency.upper() != "USD" and "NASDAQ" not in data.stock.exchange.upper(),
             },
             status_code=status_code,
@@ -563,6 +592,32 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
             url = f"/stocks/{stock_id}?ai_error={quote(str(exc))}"
         finally:
             if action_id is not None:request.app.state.action_guard.finish(action_id,success)
+        return RedirectResponse(url, status_code=303)
+
+    @application.post("/stocks/{stock_id}/mkr-analysis")
+    async def analyze_mkr(request: Request, stock_id: int) -> RedirectResponse:
+        action_id = None
+        success = False
+        try:
+            action_id = request.app.state.action_guard.start(f"stock:{stock_id}:mkr")
+            run = request.app.state.mkr_analysis_service.analyze(stock_id)
+            message = (
+                "Vorhandene aktuelle MKR-Analyse wird weiterverwendet."
+                if run.reused else "MKR-Analyse erfolgreich erstellt."
+            )
+            url = f"/stocks/{stock_id}?mkr_message={quote(message)}"
+            success = True
+        except (
+            AiBudgetExceeded,
+            MkrAnalysisAlreadyRunning,
+            MkrAnalysisFailed,
+            LookupError,
+            ActionAlreadyRunning,
+        ) as exc:
+            url = f"/stocks/{stock_id}?mkr_error={quote(str(exc))}"
+        finally:
+            if action_id is not None:
+                request.app.state.action_guard.finish(action_id, success)
         return RedirectResponse(url, status_code=303)
 
     @application.post("/stocks/{stock_id}/providers")

@@ -14,8 +14,16 @@ from httpx2 import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from analysis import TechnicalIndicators
-from database import Position, Stock, StockAiAnalysis, StockWatchService, calculate_position_metrics
+from database import (
+    MkrAnalysisRecord,
+    Position,
+    Stock,
+    StockAiAnalysis,
+    StockWatchService,
+    calculate_position_metrics,
+)
 from database import SecurityCatalog, create_database, create_session_factory
+from database.models import MkrAnalysisSource
 from web.main import create_app
 from services import StockUpdateReport, UpdateItem
 
@@ -161,6 +169,141 @@ class WebTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(f"/stocks/{goog_id}/ai/analyze", follow_redirects=False)
         self.assertEqual(response.status_code, 303)
         ai_service.analyze_stock.assert_called_once_with(goog_id)
+
+    async def test_stock_detail_without_mkr_analysis_is_local(self) -> None:
+        with create_session_factory(create_database(self.database_path))() as session:
+            airbus_id = session.scalar(select(Stock.id).where(Stock.symbol == "AIR.PAR"))
+        mkr = self.app.state.mkr_analysis_service
+        mkr.analyze = Mock()
+
+        with patch("requests.sessions.Session.get") as network:
+            response = await self.client.get(f"/stocks/{airbus_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("MKR-Analyse", response.text)
+        self.assertIn("Für diese Aktie liegt noch keine MKR-Analyse vor.", response.text)
+        self.assertIn("MKR-Analyse starten", response.text)
+        mkr.analyze.assert_not_called()
+        network.assert_not_called()
+
+    async def test_stock_detail_renders_completed_mkr_scorecard_levels_and_sources(self) -> None:
+        from tests.test_mkr_service import mkr_output
+
+        factory = create_session_factory(create_database(self.database_path))
+        with factory.begin() as session:
+            airbus_id = session.scalar(select(Stock.id).where(Stock.symbol == "AIR.PAR"))
+            result = mkr_output().model_dump(mode="json")
+            origins = ("LOCAL", "WEB", "MIXED", "NOT_AVAILABLE")
+            for index, origin in enumerate(origins):
+                result["frameworks"][index]["data_origin"] = origin
+            result["frameworks"][0]["levels"] = [{
+                "value": 199.46, "level_type": "PRICE", "currency": "EUR", "basis": "Kurs",
+            }]
+            result["frameworks"][1]["levels"] = [{
+                "value": 3.01, "level_type": "PERCENTAGE", "currency": None,
+                "basis": "Volumenabweichung",
+            }]
+            result["frameworks"][2]["levels"] = [{
+                "value": 37.37, "level_type": "INDICATOR", "currency": None, "basis": "RSI14",
+            }]
+            result["frameworks"][3]["levels"] = [{
+                "value": 1250000, "level_type": "QUANTITY", "currency": None,
+                "basis": "Handelsvolumen",
+            }]
+            parsed = __import__("ai", fromlist=["MkrAnalysis"]).MkrAnalysis.model_validate(result)
+            now = datetime.now(timezone.utc)
+            record = MkrAnalysisRecord(
+                stock_id=airbus_id, generated_at=now, completed_at=now,
+                status="COMPLETED", model="test-model", current_price=199.46,
+                price_timestamp=now, quote_type="DAILY_CLOSE", prompt_version="1.2",
+                structured_result=parsed.model_dump_json(), input_fingerprint="m" * 64,
+                confidence=parsed.confidence, data_coverage_full=14,
+                data_coverage_limited=0, data_coverage_unavailable=0,
+                web_search_used=True, web_search_calls=1,
+            )
+            session.add(record)
+            session.flush()
+            session.add(MkrAnalysisSource(
+                mkr_analysis_id=record.id, framework_number=10, source_type="WEB",
+                title="Airbus Investor Relations", url="https://example.test/airbus-report",
+                publisher="Airbus", published_at=now, accessed_at=now,
+                usage_note="Aktueller Bericht",
+            ))
+
+        response = await self.client.get(f"/stocks/{airbus_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("MKR Scorecard", response.text)
+        self.assertIn("Framework 1", response.text)
+        self.assertIn("Framework 14", response.text)
+        for origin in ("LOCAL", "WEB", "MIXED", "NOT_AVAILABLE"):
+            self.assertIn(origin, response.text)
+        self.assertIn("199,46 EUR", response.text)
+        self.assertIn("3,01 %", response.text)
+        self.assertIn("37,37000", response.text)
+        self.assertIn("1.250.000,00000", response.text)
+        self.assertNotIn("37,37000 EUR", response.text)
+        self.assertNotIn("1.250.000,00000 EUR", response.text)
+        self.assertIn("Zusammenfassung", response.text)
+        self.assertIn("Airbus Investor Relations", response.text)
+        self.assertIn('href="https://example.test/airbus-report"', response.text)
+        self.assertIn('target="_blank"', response.text)
+
+    async def test_mkr_missing_sources_and_failed_latest_keep_success_visible(self) -> None:
+        from tests.test_mkr_service import mkr_output
+
+        factory = create_session_factory(create_database(self.database_path))
+        with factory.begin() as session:
+            airbus_id = session.scalar(select(Stock.id).where(Stock.symbol == "AIR.PAR"))
+            older = datetime(2026, 9, 1, tzinfo=timezone.utc)
+            completed = MkrAnalysisRecord(
+                stock_id=airbus_id, generated_at=older, completed_at=older,
+                status="COMPLETED", model="test-model", current_price=199.46,
+                price_timestamp=older, quote_type="DAILY_CLOSE", prompt_version="1.2",
+                structured_result=mkr_output().model_dump_json(), input_fingerprint="s" * 64,
+                confidence=74, data_coverage_full=14, data_coverage_limited=0,
+                data_coverage_unavailable=0, web_search_used=False, web_search_calls=0,
+            )
+            failed = MkrAnalysisRecord(
+                stock_id=airbus_id, generated_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+                completed_at=datetime(2026, 9, 2, tzinfo=timezone.utc), status="FAILED",
+                model="test-model", prompt_version="1.2", input_fingerprint="f" * 64,
+                web_search_used=False, web_search_calls=0, error_type="api_error",
+                error_message="Analyse derzeit nicht verfügbar.",
+            )
+            session.add_all((completed, failed))
+
+        response = await self.client.get(f"/stocks/{airbus_id}")
+
+        self.assertIn("Fehlgeschlagen", response.text)
+        self.assertIn("Framework 14", response.text)
+        self.assertIn("Keine externen Quellen gespeichert.", response.text)
+        self.assertIn("erfolgreiche Analyse vom", response.text)
+
+    async def test_mkr_post_uses_existing_service_and_handles_errors(self) -> None:
+        from ai import MkrAnalysisAlreadyRunning
+
+        with create_session_factory(create_database(self.database_path))() as session:
+            airbus_id = session.scalar(select(Stock.id).where(Stock.symbol == "AIR.PAR"))
+        service = self.app.state.mkr_analysis_service
+        service.analyze = Mock(return_value=SimpleNamespace(reused=False))
+
+        response = await self.client.post(
+            f"/stocks/{airbus_id}/mkr-analysis", follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("mkr_message=", response.headers["location"])
+        service.analyze.assert_called_once_with(airbus_id)
+
+        service.analyze.reset_mock(side_effect=True)
+        service.analyze.side_effect = MkrAnalysisAlreadyRunning(
+            "Für diese Aktie läuft bereits eine MKR-14-Analyse."
+        )
+        failed = await self.client.post(
+            f"/stocks/{airbus_id}/mkr-analysis", follow_redirects=True,
+        )
+        self.assertEqual(failed.status_code, 200)
+        self.assertIn("läuft bereits", failed.text)
 
     async def test_ai_box_shows_separate_position_and_entry_ratings(self) -> None:
         with create_session_factory(create_database(self.database_path)).begin() as session:

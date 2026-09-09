@@ -12,6 +12,8 @@
   {% if update_error %}<p class="notice error compact-notice">{{ update_error }}</p>{% endif %}
   {% if ai_message %}<p class="notice success compact-notice">{{ ai_message }}</p>{% endif %}
   {% if ai_error %}<p class="notice error compact-notice">{{ ai_error }}{% if ai_analysis %} Letzte Analyse bleibt erhalten.{% endif %}</p>{% endif %}
+  {% if mkr_message %}<p class="notice success compact-notice">{{ mkr_message }}</p>{% endif %}
+  {% if mkr_error %}<p class="notice error compact-notice">{{ mkr_error }}{% if mkr_analysis %} Letzte erfolgreiche MKR-Analyse bleibt erhalten.{% endif %}</p>{% endif %}
   {% if update_report %}
     {% set issues = update_report['items'] | selectattr('status', 'in', ['limit', 'failed']) | list %}
     <div class="notice {{ 'error' if issues else 'success' }} compact-update-result">
@@ -63,6 +65,60 @@
     <div><span>SMA50</span><strong>{{ s.sma50|number if s else 'nicht verfügbar' }}{% if s and s.sma50 is not none %} {{ dashboard.stock.currency }}{% endif %}</strong></div>
   </section>
   <p class="disclaimer compact-disclaimer">Technische Kennzahlen und Trend sind keine Kauf- oder Verkaufsempfehlung.</p>
+  <section class="mkr-analysis card" aria-labelledby="mkr-analysis-title">
+    <div class="mkr-header">
+      <div>
+        <h2 id="mkr-analysis-title">MKR-Analyse</h2>
+        {% if mkr_analysis %}
+          <p class="mkr-meta">Letzte Analyse: {{ (mkr_analysis.completed_at or mkr_analysis.generated_at)|berlin_time }} · Prompt {{ mkr_analysis.prompt_version }}{% if mkr_analysis.model %} · {{ mkr_analysis.model }}{% endif %}</p>
+        {% else %}
+          <p>Für diese Aktie liegt noch keine MKR-Analyse vor.</p>
+        {% endif %}
+        {% if mkr_latest %}
+          <p class="mkr-run-state"><span class="mkr-status status-{{ mkr_latest.status|lower }}">{{ {'COMPLETED':'Abgeschlossen','RUNNING':'Läuft','FAILED':'Fehlgeschlagen'}.get(mkr_latest.status, mkr_latest.status) }}</span>{% if mkr_latest.status == 'FAILED' and mkr_analysis %} · erfolgreiche Analyse vom {{ (mkr_analysis.completed_at or mkr_analysis.generated_at)|berlin_time }} wird angezeigt{% endif %}</p>
+        {% endif %}
+      </div>
+      <div class="mkr-header-actions">
+        {% if mkr_result %}<span class="mkr-confidence"><strong>{{ mkr_result.confidence }} %</strong> Confidence</span>{% endif %}
+        <form method="post" action="/stocks/{{ dashboard.stock.id }}/mkr-analysis" data-api-action data-wait-text="MKR-Analyse läuft …"><button class="secondary-button" type="submit">MKR-Analyse starten</button></form>
+      </div>
+    </div>
+
+    {% if mkr_result %}
+      <div class="mkr-scorecard" aria-label="MKR Scorecard">
+        <div class="mkr-scorecard-head"><span>Nr.</span><span>Framework</span><span>Signal</span><span>Confidence</span><span>Qualität</span><span>Herkunft</span></div>
+        {% for framework in mkr_result.frameworks %}
+          <details class="mkr-framework">
+            <summary>
+              <span>{{ framework.number }}</span>
+              <strong>{{ framework.name }}</strong>
+              <span class="mkr-signal signal-{{ framework.signal.value|lower }}">{{ framework.signal.value }}</span>
+              <span>{{ framework.confidence }} %</span>
+              <span>{{ framework.data_quality.value }}</span>
+              <span>{{ framework.data_origin.value }}</span>
+            </summary>
+            <div class="mkr-framework-detail">
+              <p>{{ framework.explanation }}</p>
+              <dl class="mkr-framework-meta"><div><dt>Stärke</dt><dd>{{ framework.strength if framework.strength is not none else 'nicht verfügbar' }}</dd></div><div><dt>Confidence</dt><dd>{{ framework.confidence }} %</dd></div><div><dt>Qualität</dt><dd>{{ framework.data_quality.value }}</dd></div><div><dt>Herkunft</dt><dd>{{ framework.data_origin.value }}</dd></div></dl>
+              {% if framework.levels %}<ul class="mkr-levels">{% for level in framework.levels %}<li><span>{{ level.basis }}</span><strong>{% if level.value is none %}nicht verfügbar{% elif level.level_type.value == 'PRICE' %}{{ level.value|number }} {{ level.currency }}{% elif level.level_type.value == 'PERCENTAGE' %}{{ level.value|number }} %{% else %}{{ level.value|number(5) }}{% endif %}</strong><small>{{ level.level_type.value }}</small></li>{% endfor %}</ul>{% endif %}
+            </div>
+          </details>
+        {% endfor %}
+      </div>
+
+      <div class="mkr-summary">
+        <h3>Zusammenfassung</h3>
+        <ol>{% for sentence in mkr_result.summary %}<li>{{ sentence }}</li>{% endfor %}</ol>
+      </div>
+
+      <div class="mkr-sources">
+        <h3>Quellen</h3>
+        {% if mkr_sources %}<ul>{% for source in mkr_sources %}<li><span>Framework {{ source.framework_number }}</span><a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.title }}</a>{% if source.publisher %}<small>{{ source.publisher }}</small>{% endif %}{% if source.published_at %}<small>{{ source.published_at|berlin_time }}</small>{% endif %}</li>{% endfor %}</ul>{% else %}<p>Keine externen Quellen gespeichert.</p>{% endif %}
+      </div>
+    {% elif mkr_analysis and not mkr_result %}
+      <p class="notice error compact-notice">Das gespeicherte MKR-Ergebnis konnte nicht dargestellt werden.</p>
+    {% endif %}
+  </section>
   <section class="secondary-sections">
     <details class="card detail-panel"><summary>Weitere Details</summary><div class="secondary-grid">
       <div><span>Volatilität 20 Tage</span><strong>{{ s.volatility_20d|number if s else 'nicht verfügbar' }}{% if s and s.volatility_20d is not none %} % p. a.{% endif %}</strong></div>
