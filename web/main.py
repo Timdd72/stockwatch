@@ -55,6 +55,8 @@ from services import (
     TechnicalVerificationRunning,
     SchedulerService,
     StockUpdateService,
+    DecisionEngine,
+    DecisionInput,
 )
 from web.assets import CONNY_IMAGE_DATA_URL
 from database.models import ProviderCache, Stock, StockProviderSymbol
@@ -140,6 +142,53 @@ def _chart_history(session_factory, stock_id: int, snapshot) -> tuple[list[dict]
     if span >= 365:
         periods.insert(-1, "1J")
     return points, periods
+
+
+def _decision_input(data, mkr_result=None, stockwatch_analysis=None) -> DecisionInput:
+    """Build the decision input from the already loaded dashboard state."""
+    quote = data.snapshot
+    technical = data.technical_snapshot
+    position = data.position
+    context = None
+    context_timestamp = None
+    if technical is not None:
+        context_timestamp = technical.timestamp
+        context = {
+            "trend": technical.trend,
+            "performance_5d": technical.performance_5d,
+            "performance_20d": technical.performance_20d,
+            "performance_60d": technical.performance_60d,
+            "sma20": technical.sma20,
+            "sma50": technical.sma50,
+            "sma200": technical.sma200,
+            "rsi14": technical.rsi14,
+            "volatility_20d": technical.volatility_20d,
+        }
+    metrics = position
+    frameworks = tuple(item.model_dump(mode="json") for item in mkr_result.frameworks) if mkr_result else ()
+    mkr_coverage = mkr_result.data_coverage if mkr_result else None
+    return DecisionInput(
+        current_price=quote.price if quote else None,
+        currency=data.stock.currency,
+        price_type=quote.price_type if quote else None,
+        data_timestamp=(quote.market_timestamp or quote.timestamp) if quote else None,
+        technical_context_timestamp=context_timestamp,
+        technical_context=context,
+        has_position=metrics is not None,
+        purchase_price=float(metrics.position.purchase_price) if metrics else None,
+        profit_loss=float(metrics.profit_loss) if metrics and metrics.profit_loss is not None else None,
+        profit_loss_percent=float(metrics.profit_loss_percent) if metrics and metrics.profit_loss_percent is not None else None,
+        mkr_frameworks=frameworks,
+        mkr_confidence=float(mkr_result.confidence) if mkr_result else None,
+        mkr_data_coverage_full=mkr_coverage.full if mkr_coverage else 0,
+        mkr_data_coverage_limited=mkr_coverage.limited if mkr_coverage else 0,
+        mkr_data_coverage_not_available=mkr_coverage.not_available if mkr_coverage else 14,
+        mkr_data_gaps=(f"{mkr_coverage.not_available}/14 MKR-Frameworks nicht verfügbar",) if mkr_coverage and mkr_coverage.not_available else (),
+        stockwatch_position_action=stockwatch_analysis.analysis.position_rating if stockwatch_analysis and stockwatch_analysis.analysis.position_rating else None,
+        stockwatch_position_confidence=float(stockwatch_analysis.analysis.position_confidence) if stockwatch_analysis and stockwatch_analysis.analysis.position_confidence is not None else None,
+        stockwatch_entry_action=stockwatch_analysis.analysis.entry_rating if stockwatch_analysis and stockwatch_analysis.analysis.entry_rating else None,
+        stockwatch_entry_confidence=float(stockwatch_analysis.analysis.entry_confidence) if stockwatch_analysis and stockwatch_analysis.analysis.entry_confidence is not None else None,
+    )
 
 
 templates.env.filters["number"] = number
@@ -397,6 +446,10 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
             mkr_result = mkr_service.load_result(mkr_analysis) if mkr_analysis else None
         except ValueError:
             mkr_result = None
+        try:
+            decision = DecisionEngine().evaluate(_decision_input(data, mkr_result, request.app.state.ai_analysis_service.latest(stock_id))) if data.snapshot else None
+        except (TypeError, ValueError, AttributeError):
+            decision = None
         return templates.TemplateResponse(
             request=request,
             name="stock_detail.html",
@@ -429,6 +482,7 @@ def create_app(database_path: str | Path = DEFAULT_DATABASE_PATH) -> FastAPI:
                 "chart_periods": chart_periods,
                 "position_purchase_price": float(data.position.position.purchase_price) if data.position else None,
                 "manual_quote_enabled": data.stock.currency.upper() != "USD" and "NASDAQ" not in data.stock.exchange.upper(),
+                "decision": decision,
             },
             status_code=status_code,
         )

@@ -130,6 +130,33 @@ class DecisionEngineTests(unittest.TestCase):
         self.assertIsNot(result.position_decision.reasons, result.entry_decision.reasons)
         self.assertTrue(result.position_decision.opposing_signals)
 
+    def test_partial_overall_coverage_cannot_reach_100(self):
+        result = self.engine.evaluate(DecisionInput(current_price=100, trend="NEGATIV", performance_20d=-5, performance_60d=-8, sma20=110, sma50=115, rsi14=45))
+        self.assertLess(result.confidence, 100)
+        self.assertNotEqual(result.data_quality, "GOOD")
+
+    def test_fundamental_mkr_signal_offsets_technical_signal(self):
+        result = self.engine.evaluate(DecisionInput(current_price=100, trend="NEGATIV", performance_20d=-5, performance_60d=-8, sma20=110, sma50=115, mkr_frameworks=({"number": 10, "signal": "BULLISH", "confidence": 65, "data_quality": "LIMITED"},), mkr_data_coverage_limited=1, mkr_data_coverage_not_available=13))
+        self.assertIn("Fundamentals/Katalysatoren sind bullish", result.supporting_signals)
+        self.assertTrue(result.data_gaps)
+
+    def test_stockwatch_signals_are_limited_meta_signals(self):
+        result = self.engine.evaluate(DecisionInput(current_price=100, trend="NEGATIV", stockwatch_position_action="HOLD", stockwatch_entry_action="WATCH"))
+        self.assertNotIn("StockWatch-Einschätzung steht der Richtung entgegen", result.opposing_signals)
+        self.assertLess(result.confidence, 100)
+
+    def test_mkr_block_is_clamped_and_framework10_is_separate(self):
+        bearish = tuple({"number": i, "signal": "BEARISH", "confidence": 100, "data_quality": "GOOD"} for i in range(1, 10))
+        bullish = tuple({"number": i, "signal": "BULLISH", "confidence": 100, "data_quality": "GOOD"} for i in range(1, 10))
+        self.assertGreaterEqual(self.engine._mkr_score(bearish), -2)
+        self.assertLessEqual(self.engine._mkr_score(bullish), 2)
+        self.assertEqual(self.engine._mkr_score(({"number": 10, "signal": "BULLISH", "confidence": 100, "data_quality": "GOOD"},)), 0)
+
+    def test_conflicting_fundamental_and_technical_signals_warn(self):
+        result = self.engine.evaluate(DecisionInput(current_price=100, trend="NEGATIV", performance_20d=-4, sma20=110, mkr_frameworks=({"number": 10, "signal": "BULLISH", "confidence": 65, "data_quality": "LIMITED"},), mkr_data_coverage_limited=1, mkr_data_coverage_not_available=13))
+        self.assertIn("Signale widersprechen sich.", result.warnings)
+        self.assertIn("Fundamentals/Katalysatoren sind bullish", result.supporting_signals)
+
 
 if __name__ == "__main__":
     unittest.main()

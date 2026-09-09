@@ -75,7 +75,14 @@ class DecisionInput:
     fibonacci_levels: tuple[float, ...] = ()
     mkr_frameworks: tuple[Mapping[str, Any], ...] = ()
     mkr_confidence: float | None = None
+    mkr_data_coverage_full: int = 0
+    mkr_data_coverage_limited: int = 0
+    mkr_data_coverage_not_available: int = 14
     mkr_data_gaps: tuple[str, ...] = ()
+    stockwatch_position_action: str | None = None
+    stockwatch_position_confidence: float | None = None
+    stockwatch_entry_action: str | None = None
+    stockwatch_entry_confidence: float | None = None
     data_gaps: tuple[str, ...] = ()
     data_quality: str | None = None
     price_type: str | None = None
@@ -120,6 +127,7 @@ class DecisionResult:
     entry_action: DecisionAction = DecisionAction.HOLD
     position_decision: "PerspectiveResult | None" = None
     entry_decision: "PerspectiveResult | None" = None
+    block_contributions: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,39 +179,48 @@ class DecisionEngine:
             score -= self.weights.trend
             opposing.append("Trend ist negativ")
 
+        performance_score = 0
         for name, value_ in (("5-Tage-Performance", data.performance_5d), ("20-Tage-Performance", data.performance_20d), ("60-Tage-Performance", data.performance_60d)):
             if _number(value_):
                 if value_ > 0:
-                    score += self.weights.performance
+                    performance_score += 1
                     supporting.append(f"{name} positiv ({value_:.2f} %)")
                 elif value_ < 0:
-                    score -= self.weights.performance
+                    performance_score -= 1
                     opposing.append(f"{name} negativ ({value_:.2f} %)")
 
+        if performance_score:
+            score += (self.weights.performance * (1 if performance_score > 0 else -1))
+        ma_score = 0
         for name, price, average in (("SMA20", data.current_price, data.sma20), ("SMA50", data.current_price, data.sma50)):
             if _number(price) and _number(average):
                 if price >= average:
-                    score += self.weights.moving_average
+                    ma_score += 1
                     supporting.append(f"Kurs liegt über {name}")
                 else:
-                    score -= self.weights.moving_average
+                    ma_score -= 1
                     opposing.append(f"Kurs liegt unter {name}")
 
+        if ma_score:
+            score += self.weights.moving_average * (1 if ma_score > 0 else -1)
+        momentum_score = 0
         if _number(data.macd_histogram):
             if data.macd_histogram > 0:
-                score += self.weights.momentum
+                momentum_score += 1
                 supporting.append("MACD-Histogramm ist positiv")
             elif data.macd_histogram < 0:
-                score -= self.weights.momentum
+                momentum_score -= 1
                 opposing.append("MACD-Histogramm ist negativ")
         if _number(data.rsi14):
             if data.rsi14 >= 75:
-                score -= self.weights.momentum
+                momentum_score -= 1
                 opposing.append(f"RSI ist überhitzt ({data.rsi14:.2f})")
             elif data.rsi14 <= 25:
-                score += self.weights.momentum
+                momentum_score += 1
                 supporting.append(f"RSI ist stark überverkauft ({data.rsi14:.2f})")
 
+        if momentum_score:
+            score += self.weights.momentum * (1 if momentum_score > 0 else -1)
         mkr_score = self._mkr_score(data.mkr_frameworks)
         score += mkr_score
         if mkr_score > 0:
@@ -211,7 +228,21 @@ class DecisionEngine:
         elif mkr_score < 0:
             opposing.append("belastbare MKR-Signale sind überwiegend negativ")
 
-        confidence, quality, gaps, warnings = self._confidence(data, score, supporting, opposing)
+        fundamental_score = self._fundamental_score(data.mkr_frameworks)
+        score += fundamental_score
+        if fundamental_score > 0:
+            supporting.append("Fundamentals/Katalysatoren sind bullish")
+        elif fundamental_score < 0:
+            opposing.append("Fundamentals/Katalysatoren sind bearish")
+        stockwatch_position = self._stockwatch_signal(data.stockwatch_position_action)
+        stockwatch_entry = self._stockwatch_signal(data.stockwatch_entry_action)
+        score += stockwatch_position + stockwatch_entry
+        if stockwatch_position > 0 or stockwatch_entry > 0:
+            supporting.append("StockWatch-Einschätzung stützt die Richtung")
+        elif stockwatch_position < 0 or stockwatch_entry < 0:
+            opposing.append("StockWatch-Einschätzung steht der Richtung entgegen")
+
+        confidence, quality, gaps, warnings = self._confidence(data, score, supporting, opposing, (performance_score, ma_score, momentum_score, mkr_score, fundamental_score, stockwatch_position, stockwatch_entry))
         reasons.extend((supporting + opposing)[:6])
         entry_reasons = tuple(reasons)
         if data.has_position and _number(data.profit_loss_percent):
@@ -223,9 +254,8 @@ class DecisionEngine:
         buy_low, buy_high, sell_low, sell_high = self._zones(data)
         invalidation = self._invalidation(data)
         signal = self._signal(score)
-        entry_action = (DecisionAction.BUY if signal in (Signal.BULLISH, Signal.STRONG_BULLISH)
-                        else DecisionAction.SELL if signal in (Signal.BEARISH, Signal.STRONG_BEARISH)
-                        else DecisionAction.HOLD)
+        conflict = bool(supporting and opposing)
+        entry_action = self._entry_action(signal, score, confidence, quality, conflict)
         entry_warnings = tuple(warnings)
         entry = PerspectiveResult(
             DecisionPerspective.NEW_ENTRY, entry_action, confidence,
@@ -235,7 +265,7 @@ class DecisionEngine:
         position = None
         if data.has_position:
             # Ein Bestand kann nicht "gekauft" werden; Aufstockung ist NEW_ENTRY.
-            position_action = DecisionAction.SELL if signal in (Signal.BEARISH, Signal.STRONG_BEARISH) else DecisionAction.HOLD
+            position_action = self._position_action(signal, score, confidence, quality, conflict)
             position_confidence = min(100, confidence + (6 if data.purchase_price is not None else 0))
             position_reasons = list(reasons)
             if data.purchase_price is not None:
@@ -263,12 +293,23 @@ class DecisionEngine:
             data_quality=quality, data_gaps=tuple(gaps), signal=signal,
             position_action=position_action, entry_action=entry_action,
             position_decision=position, entry_decision=entry,
+            block_contributions=(
+                ("TECHNICAL_TREND", self.weights.trend if trend == "POSITIV" else -self.weights.trend if trend == "NEGATIV" else 0),
+                ("PERFORMANCE", self.weights.performance * (1 if performance_score > 0 else -1 if performance_score < 0 else 0)),
+                ("MOVING_AVERAGES", self.weights.moving_average * (1 if ma_score > 0 else -1 if ma_score < 0 else 0)),
+                ("MOMENTUM", self.weights.momentum * (1 if momentum_score > 0 else -1 if momentum_score < 0 else 0)),
+                ("MKR", mkr_score), ("FUNDAMENTALS", fundamental_score),
+                ("STOCKWATCH_POSITION", stockwatch_position), ("STOCKWATCH_ENTRY", stockwatch_entry),
+            ),
         )
 
     def _mkr_score(self, frameworks: tuple[Mapping[str, Any], ...]) -> int:
-        score = 0
+        weighted = 0.0
+        weight_total = 0.0
         for framework in frameworks:
             get = framework.get if isinstance(framework, Mapping) else lambda key, default=None: getattr(framework, key, default)
+            if int(get("number", 0) or 0) == 10:
+                continue
             quality = str(get("data_quality", "INSUFFICIENT")).upper()
             if quality in {"INSUFFICIENT", "NOT_AVAILABLE"}:
                 continue
@@ -276,11 +317,48 @@ class DecisionEngine:
             factor = 1.0 if quality in {"GOOD", "FULL"} else 0.5
             factor *= min(max(confidence, 0.0), 100.0) / 100.0
             signal = str(get("signal", "NEUTRAL")).upper()
-            if signal == "BULLISH":
-                score += round(self.weights.mkr * factor)
-            elif signal == "BEARISH":
-                score -= round(self.weights.mkr * factor)
-        return score
+            if signal in {"BULLISH", "BEARISH"}:
+                weighted += (1 if signal == "BULLISH" else -1) * factor
+                weight_total += factor
+        if not weight_total:
+            return 0
+        return max(-self.weights.mkr, min(self.weights.mkr, round(self.weights.mkr * weighted / max(1.0, len([f for f in frameworks if (f.get('signal') if isinstance(f, Mapping) else getattr(f, 'signal', None)) in {'BULLISH', 'BEARISH'}])))))
+
+    @staticmethod
+    def _entry_action(signal, score, confidence, quality, conflict):
+        if signal in (Signal.BULLISH, Signal.STRONG_BULLISH) and score >= 3 and confidence >= 45 and not conflict:
+            return DecisionAction.BUY
+        if signal in (Signal.BEARISH, Signal.STRONG_BEARISH) and score <= -2 and confidence >= 25:
+            return DecisionAction.SELL
+        return DecisionAction.HOLD
+
+    @staticmethod
+    def _position_action(signal, score, confidence, quality, conflict):
+        if signal in (Signal.BEARISH, Signal.STRONG_BEARISH) and score <= -4 and confidence >= 45 and quality != "INSUFFICIENT" and not conflict:
+            return DecisionAction.SELL
+        return DecisionAction.HOLD
+
+    def _fundamental_score(self, frameworks) -> int:
+        for framework in frameworks:
+            get = framework.get if isinstance(framework, Mapping) else lambda key, default=None: getattr(framework, key, default)
+            if int(get("number", 0) or 0) != 10:
+                continue
+            quality = str(get("data_quality", "INSUFFICIENT")).upper()
+            if quality in {"INSUFFICIENT", "NOT_AVAILABLE"}:
+                return 0
+            signal = str(get("signal", "NEUTRAL")).upper()
+            return (1 if signal == "BULLISH" else -1 if signal == "BEARISH" else 0)
+        return 0
+
+    @staticmethod
+    def _stockwatch_signal(action: str | None) -> int:
+        value = getattr(action, "value", action)
+        value = str(value or "").upper()
+        if value in {"BUY", "ADD", "STRONG_BUY"}:
+            return 1
+        if value in {"SELL", "REDUCE", "STRONG_SELL", "AVOID"}:
+            return -1
+        return 0
 
     @staticmethod
     def _signal(score: int) -> Signal:
@@ -294,10 +372,12 @@ class DecisionEngine:
             return Signal.BEARISH
         return Signal.NEUTRAL
 
-    def _confidence(self, data, score, supporting, opposing):
+    def _confidence(self, data, score, supporting, opposing, block_scores=()):
         supplied = [data.current_price, data.trend, data.performance_20d, data.performance_60d, data.sma20, data.sma50, data.rsi14, data.macd_histogram]
         present = sum(item is not None for item in supplied)
-        quality = ("GOOD" if present >= 6 else "LIMITED" if present >= 3 else "INSUFFICIENT")
+        available_blocks = 1 if present else 0
+        available_blocks += sum(1 for item in (data.mkr_frameworks, data.stockwatch_position_action, data.stockwatch_entry_action) if item)
+        quality = "GOOD" if available_blocks >= 4 and present >= 6 else "LIMITED" if available_blocks >= 2 or present >= 3 else "INSUFFICIENT"
         gaps = list(data.data_gaps) + list(data.mkr_data_gaps)
         warnings: list[str] = []
         context_timestamp = data.technical_context_timestamp or data.data_timestamp
@@ -311,7 +391,15 @@ class DecisionEngine:
             gaps.append("keine belastbaren Signale")
         if supporting and opposing:
             warnings.append("Signale widersprechen sich.")
-        confidence = 35 + present * 7 + min(abs(score) * 4, 20) - len(gaps) * 6 - (12 if supporting and opposing else 0)
+        if data.mkr_frameworks:
+            available = data.mkr_data_coverage_full + data.mkr_data_coverage_limited
+            if available < 7:
+                gaps.append(f"MKR-Abdeckung gering ({available}/14)")
+                quality = "LIMITED"
+        conflict = 12 if supporting and opposing else 0
+        agreement = 10 if block_scores and all((item >= 0 for item in block_scores) if score >= 0 else (item <= 0 for item in block_scores)) else 0
+        confidence = 20 + int(45 * min(available_blocks / 5, 1)) + min(abs(score) * 2, 15) + agreement - len(gaps) * 8 - conflict
+        confidence = min(confidence, 88 if available_blocks < 5 or gaps else 95)
         return max(0, min(100, int(confidence))), quality, tuple(dict.fromkeys(gaps)), warnings
 
     @staticmethod
