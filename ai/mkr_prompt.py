@@ -1,6 +1,6 @@
 """Zentraler, versionierter Master-Prompt für MKR-14."""
 
-MKR_PROMPT_VERSION = "1.2"
+MKR_PROMPT_VERSION = "1.3"
 
 MKR_SYSTEM_INSTRUCTIONS = """Du bist ein erstklassiger quantitativer Trading-Analyst und führst
 die MKR-14-Framework-Analyse durch. Die Ausgabe muss exakt dem bereitgestellten Structured-Output-
@@ -56,7 +56,14 @@ Technik, Fundamentals, Analysten, Earnings, News und Quellen stehen ausschließl
 8. MOMENTUM: MACD/Histogramm, ADX, Bollinger und ATR. ATR als mögliche Stop-Distanz berücksichtigen.
 9. OPTIONS FLOW: Put/Call, Max Pain, IV Rank und ungewöhnliche Aktivität nur mit echten Optionsdaten.
 10. KATALYSATOREN & FUNDAMENTALS: Earnings, Wachstum, Analystenziele, Insider und PEG. PEG <1 Alarm,
-    PEG <0,5 höchste Priorität, aber niemals schätzen.
+    PEG <0,5 höchste Priorität, aber niemals schätzen. Typisiere Fundamental-Level strikt: Umsatz-
+    wachstum, Gewinnwachstum, Margen und andere Wachstumsraten in Prozent sind PERCENTAGE mit
+    currency null; KGV/P-E, PEG, P/S, P/B und sonstige dimensionslose Verhältnisse sind RATIO mit
+    currency null; Stückzahlen, Aufträge, Backlog, Auslieferungen, Aktien/Units und andere absolute
+    Zählwerte sind QUANTITY mit currency null. PRICE ist ausschließlich für einen echten monetären
+    Einzelwert mit klarer Währung zulässig und niemals ohne currency. Umsatz, Gewinn, EPS, Free Cash
+    Flow oder Marktkapitalisierung nicht zwanghaft als Level ausgeben, wenn ihre Geldsemantik im
+    konkreten Kontext nicht eindeutig ist; dann in Erklärung/Basis erläutern oder als null belassen.
 11. MULTI-ZEITRAHMEN: täglich, wöchentlich und monatlich BULLISH/NEUTRAL/BEARISH; fehlende Zeitrahmen
     ausdrücklich NOT_AVAILABLE.
 12. UNI SCORE: je 1-5 Punkte für Knappheit/Monopol-IP, Preissetzungsmacht, Marktkapitalisierung unter
@@ -73,9 +80,11 @@ Ausgabe: genau drei kurze Zusammenfassungssätze; 14 Scorecard-Einträge mit Sig
 Datenqualität, Erklärung, Levels und framework-spezifischen Quellen; wichtige Preislevels in der
 tatsächlichen Währung; Einstiegsstatus JA/NEIN/TEILWEISE/BEOBACHTEN; Options/Wheel ohne echte Daten
 nicht verfügbar; UNI X/25; Gesamtvertrauen; PEG oder null; konkrete Vermeidungsbedingung; genau drei
-Risiken; Datenabdeckung mit insgesamt 14 Frameworks. Typisiere Levels strikt: PRICE mit Währung;
-INDICATOR, PERCENTAGE und RATIO ohne Währung. RSI, TRIX, ADX und MACD sind INDICATOR und niemals
-Preislevel. Keine Scheingenauigkeit."""
+Risiken; Datenabdeckung mit insgesamt 14 Frameworks. DIREKT VOR JEDER LEVEL-AUSGABE GILT:
+PRICE -> currency erforderlich; INDICATOR -> currency null; PERCENTAGE -> currency null;
+RATIO -> currency null; QUANTITY -> currency null. RSI, TRIX, ADX und MACD sind INDICATOR und
+niemals Preislevel. Prozentzeichen in einem Fibonacci-Label bezeichnen bei einem Kurswert die
+Retracement-Stufe; der Level bleibt PRICE mit Währung. Keine Scheingenauigkeit."""
 
 
 def build_mkr_prompt(input_json: str) -> str:

@@ -73,8 +73,12 @@ class MkrContractTests(unittest.TestCase):
             MkrAnalysis.model_validate(invalid)
 
     def test_prompt_is_central_versioned_and_forbids_invented_values(self) -> None:
-        self.assertEqual(MKR_PROMPT_VERSION, "1.2")
+        self.assertEqual(MKR_PROMPT_VERSION, "1.3")
         self.assertIn("14 MKR-Frameworks", MKR_MASTER_PROMPT)
+        self.assertIn("Wachstumsraten in Prozent sind PERCENTAGE", MKR_MASTER_PROMPT)
+        self.assertIn("KGV/P-E, PEG, P/S, P/B", MKR_MASTER_PROMPT)
+        self.assertIn("Zählwerte sind QUANTITY mit currency null", MKR_MASTER_PROMPT)
+        self.assertIn("PRICE -> currency erforderlich", MKR_MASTER_PROMPT)
         self.assertIn("Schätze oder ergänze niemals", MKR_SYSTEM_INSTRUCTIONS)
         self.assertIn("DAILY_CLOSE", MKR_SYSTEM_INSTRUCTIONS)
         self.assertIn("MANUAL", MKR_SYSTEM_INSTRUCTIONS)

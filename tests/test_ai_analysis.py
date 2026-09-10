@@ -49,6 +49,16 @@ class FakeResponses:
         )
 
 
+class MetadataResponses:
+    def __init__(self, response) -> None:
+        self.response = response
+        self.calls: list[dict] = []
+
+    def parse(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.response
+
+
 class AiAnalysisTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -150,6 +160,63 @@ class AiAnalysisTests(unittest.TestCase):
         self.assertFalse(usages[-1].success)
         self.assertEqual(usages[-1].error_type, "network")
         self.assertEqual([item.id for item in analyses], [successful.analysis.id])
+
+    def test_structured_validation_failure_logs_safe_diagnostics_and_keeps_usage(self) -> None:
+        response = SimpleNamespace(
+            id="resp-test-validation", status="completed", output_parsed={"bad": True},
+            usage=SimpleNamespace(input_tokens=321, output_tokens=12, total_tokens=333),
+            output=[],
+        )
+        service = self.service(MetadataResponses(response))
+        with self.assertLogs("ai.service", level="WARNING") as logs:
+            with self.assertRaises(AiAnalysisError):
+                service.request_structured(
+                    "DO NOT LOG THIS PROMPT", StockAnalysisOutput, "instructions",
+                    purpose="diagnostic_test", stock_id=self.stock.id,
+                )
+        line = "\n".join(logs.output)
+        self.assertIn("validation_error", line)
+        self.assertIn("resp-test-validation", line)
+        self.assertIn("usage=321/12/333", line)
+        self.assertNotIn("DO NOT LOG THIS PROMPT", line)
+        with self.factory() as session:
+            usage = session.scalar(select(AiUsage).order_by(AiUsage.id.desc()))
+            self.assertEqual((usage.input_tokens, usage.output_tokens, usage.total_tokens), (321, 12, 333))
+            self.assertFalse(usage.success)
+
+    def test_missing_parsed_output_is_diagnosed(self) -> None:
+        response = SimpleNamespace(
+            id="resp-test-empty", status="completed", output_parsed=None,
+            usage=SimpleNamespace(input_tokens=10, output_tokens=0, total_tokens=10), output=[],
+        )
+        with self.assertLogs("ai.service", level="WARNING") as logs:
+            with self.assertRaises(AiAnalysisError):
+                self.service(MetadataResponses(response)).request_structured(
+                    "{}", StockAnalysisOutput, "instructions", purpose="diagnostic_test",
+                    stock_id=self.stock.id,
+                )
+        self.assertIn("output_parsed_missing", "\n".join(logs.output))
+
+    def test_incomplete_and_refusal_responses_have_distinct_diagnostics(self) -> None:
+        cases = (
+            ("response_incomplete", SimpleNamespace(
+                id="resp-test-incomplete", status="incomplete",
+                incomplete_details=SimpleNamespace(reason="max_output_tokens"), output_parsed=None,
+                usage=SimpleNamespace(input_tokens=1, output_tokens=2, total_tokens=3), output=[],
+            )),
+            ("refusal", SimpleNamespace(
+                id="resp-test-refusal", status="completed", refusal="not allowed",
+                output_parsed=None, usage=SimpleNamespace(input_tokens=4, output_tokens=5, total_tokens=9), output=[],
+            )),
+        )
+        for expected, response in cases:
+            with self.subTest(expected=expected), self.assertLogs("ai.service", level="WARNING") as logs:
+                with self.assertRaises(AiAnalysisError):
+                    self.service(MetadataResponses(response)).request_structured(
+                        "{}", StockAnalysisOutput, "instructions", purpose="diagnostic_test",
+                        stock_id=self.stock.id,
+                    )
+            self.assertIn(expected, "\n".join(logs.output))
 
     def test_news_is_explicitly_untrusted_and_only_local_data_is_sent(self) -> None:
         with self.factory.begin() as session:

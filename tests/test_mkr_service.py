@@ -100,7 +100,7 @@ class MkrServiceTests(unittest.TestCase):
         self.assertFalse(run.reused)
         self.assertEqual(run.record.status, "COMPLETED")
         self.assertEqual(run.record.model, "configured-test-model")
-        self.assertEqual(run.record.prompt_version, "1.2")
+        self.assertEqual(run.record.prompt_version, "1.3")
         self.assertFalse(run.record.web_search_used)
         self.assertEqual(run.record.web_search_calls, 0)
         loaded = service.load_result(run.record)

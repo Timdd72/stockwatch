@@ -7,9 +7,11 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
 import json
+import logging
+import re
 import unicodedata
 from typing import Any, Callable, TypeVar
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from openai import OpenAI
 from sqlalchemy import func, select
@@ -31,6 +33,21 @@ from database.repository import StockWatchRepository
 from database.service import calculate_position_metrics
 from .config import AiConfig, load_openai_api_key
 from .schemas import StockAnalysisOutput
+
+
+logger = logging.getLogger(__name__)
+
+
+class _StructuredOutputMissing(ValueError):
+    """Interner Diagnosemarker für Responses ohne parsebares Ergebnis."""
+
+
+class _StructuredResponseIncomplete(ValueError):
+    """Interner Diagnosemarker für unvollständige Responses."""
+
+
+class _StructuredResponseRefusal(ValueError):
+    """Interner Diagnosemarker für eine Modell-Verweigerung."""
 
 
 SYSTEM_INSTRUCTIONS = """Du bist die Analysekomponente von StockWatch. Der verbindliche
@@ -218,6 +235,9 @@ class AiAnalysisService:
         status = self.status()
         if status.estimated_cost_eur >= status.budget_eur:
             raise AiBudgetExceeded(f"Monatliches KI-Budget von {status.budget_eur:.2f} € erreicht.")
+        response = None
+        parsed = None
+        input_tokens = output_tokens = total_tokens = web_calls = 0
         try:
             arguments={"model":model or self.config.model,
                 "input":[{"role": "system", "content": system_instructions},
@@ -227,14 +247,17 @@ class AiAnalysisService:
             if max_tool_calls is not None:arguments["max_tool_calls"]=max_tool_calls
             if include is not None:arguments["include"]=include
             response = self._client_factory().responses.parse(**arguments)
+            input_tokens, output_tokens, total_tokens = _response_usage(response)
+            web_calls = _response_web_call_count(response)
+            if _has_refusal(response):
+                raise _StructuredResponseRefusal("Response enthält eine Verweigerung")
+            if _has_incomplete(response):
+                raise _StructuredResponseIncomplete("Response ist unvollständig")
             parsed = response.output_parsed
+            if parsed is None:
+                raise _StructuredOutputMissing("output_parsed ist leer")
             if not isinstance(parsed, schema):
                 parsed = schema.model_validate(parsed)
-            input_tokens = int(getattr(response.usage, "input_tokens", 0) or 0)
-            output_tokens = int(getattr(response.usage, "output_tokens", 0) or 0)
-            total_tokens = int(getattr(response.usage, "total_tokens", input_tokens + output_tokens) or 0)
-            web_calls=sum(1 for item in (getattr(response,"output",None) or [])
-                          if getattr(item,"type",None)=="web_search_call")
             web_sources = _response_web_sources(response)
             cost = self._estimate_cost(input_tokens, output_tokens)+Decimal(web_calls)*self.config.web_search_cost_eur_per_call
             if record_usage:
@@ -250,13 +273,21 @@ class AiAnalysisService:
         except AiBudgetExceeded:
             raise
         except Exception as exc:
-            error_type = _error_type(exc)
+            error_type = _structured_error_type(exc, response)
+            _log_structured_failure(
+                exc, error_type, response, parsed, input_tokens, output_tokens,
+                total_tokens, web_calls,
+            )
             if record_usage:
                 with self._session_factory.begin() as session:
+                    cost = (
+                        self._estimate_cost(input_tokens, output_tokens)
+                        + Decimal(web_calls) * self.config.web_search_cost_eur_per_call
+                    )
                     session.add(AiUsage(stock_id=stock_id, purpose=purpose, model=model or self.config.model,
-                        input_tokens=0, output_tokens=0, total_tokens=0,
-                        estimated_cost_eur=Decimal("0"), success=False, error_type=error_type,
-                        tool_type=tool_type or ("web_search" if tools else None),tool_calls=0))
+                        input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens,
+                        estimated_cost_eur=cost, success=False, error_type=error_type,
+                        tool_type=tool_type or ("web_search" if tools else None),tool_calls=web_calls))
                 raise AiAnalysisError(_friendly_error(error_type)) from None
             # Der bestehende Aktienpfad protokolliert atomar in seinem eigenen Handler.
             raise
@@ -449,6 +480,94 @@ def _error_type(exc: Exception) -> str:
     if "connection" in name or "timeout" in name:
         return "network"
     return "api_error"
+
+
+def _structured_error_type(exc: Exception, response: Any) -> str:
+    """Classify structured-output failures without exposing provider details."""
+    if _has_refusal(response):
+        return "refusal"
+    if _has_incomplete(response):
+        return "response_incomplete"
+    if isinstance(exc, _StructuredResponseRefusal):
+        return "refusal"
+    if isinstance(exc, _StructuredResponseIncomplete):
+        return "response_incomplete"
+    if isinstance(exc, _StructuredOutputMissing):
+        return "output_parsed_missing"
+    if isinstance(exc, ValidationError):
+        return "validation_error"
+    if response is not None:
+        return "structured_parse_error"
+    return _error_type(exc)
+
+
+def _response_usage(response: Any) -> tuple[int, int, int]:
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    total_tokens = int(getattr(usage, "total_tokens", input_tokens + output_tokens) or 0)
+    return input_tokens, output_tokens, total_tokens
+
+
+def _response_web_call_count(response: Any) -> int:
+    return sum(
+        1 for item in (getattr(response, "output", None) or [])
+        if getattr(item, "type", None) == "web_search_call"
+    )
+
+
+def _has_incomplete(response: Any) -> bool:
+    if response is None:
+        return False
+    status = str(getattr(response, "status", "") or "").lower()
+    return status == "incomplete" or getattr(response, "incomplete_details", None) is not None
+
+
+def _has_refusal(response: Any) -> bool:
+    if response is None:
+        return False
+    if getattr(response, "refusal", None):
+        return True
+    for item in getattr(response, "output", None) or []:
+        if getattr(item, "type", None) == "refusal":
+            return True
+        for content in getattr(item, "content", None) or []:
+            if getattr(content, "type", None) == "refusal" or getattr(content, "refusal", None):
+                return True
+    return False
+
+
+def _safe_diagnostic_message(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        # Nur Pfade und Fehlertypen, niemals input_value/Prompt-Inhalte loggen.
+        details = [
+            f"{'.'.join(str(part) for part in error.get('loc', ())) or '<root>'}:"
+            f"{error.get('type', 'validation')}"
+            for error in exc.errors()
+        ]
+        return "; ".join(details)[:300]
+    message = " ".join(str(exc).split())
+    # Keine langen Providerdetails oder offensichtliche Secret-Muster loggen.
+    message = re.sub(r"sk-[A-Za-z0-9_-]+", "[redacted-key]", message)
+    message = re.sub(r"(?i)(secret|api[_ -]?key|token)[=: -]+[^\s,;]+", r"\1=[redacted]", message)
+    return message[:300]
+
+
+def _log_structured_failure(
+    exc: Exception, error_type: str, response: Any, parsed: Any,
+    input_tokens: int, output_tokens: int, total_tokens: int, web_calls: int,
+) -> None:
+    response_id = getattr(response, "id", None) if response is not None else None
+    response_status = getattr(response, "status", None) if response is not None else None
+    incomplete = getattr(response, "incomplete_details", None) if response is not None else None
+    logger.warning(
+        "Structured-Output fehlgeschlagen: type=%s exception=%s message=%s "
+        "response_id=%s response_status=%s output_parsed=%s incomplete=%s refusal=%s "
+        "usage=%s/%s/%s web_calls=%s",
+        error_type, exc.__class__.__name__, _safe_diagnostic_message(exc),
+        response_id, response_status, parsed is not None, incomplete is not None,
+        _has_refusal(response), input_tokens, output_tokens, total_tokens, web_calls,
+    )
 
 
 def _friendly_error(error_type: str) -> str:
