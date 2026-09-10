@@ -27,7 +27,10 @@ from database import (
 from database import SecurityCatalog, create_database, create_session_factory
 from database.models import MkrAnalysisSource
 from web.main import create_app
-from services import StockUpdateReport, UpdateItem
+from services import (
+    DecisionAction, DecisionPerspective, DecisionResult, PerspectiveResult,
+    StockUpdateReport, UpdateItem,
+)
 
 
 class WebTests(unittest.IsolatedAsyncioTestCase):
@@ -209,6 +212,59 @@ class WebTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('data-price-chart', response.text)
         self.assertIn('data-chart-range="Max"', response.text)
         self.assertIn("price-chart.js", response.text)
+        network.assert_not_called()
+
+    async def test_stock_detail_shows_decision_card_from_local_data(self) -> None:
+        with patch("requests.sessions.Session.get") as network:
+            response = await self.client.get("/stocks/1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("StockWatch Entscheidung", response.text)
+        self.assertIn("Neukauf / Aufstockung", response.text)
+        self.assertIn("Confidence beschreibt", response.text)
+        network.assert_not_called()
+
+    async def test_stale_quote_shows_local_freshness_hint(self) -> None:
+        self.service.save_analysis(
+            "AIR.PAR",
+            TechnicalIndicators(190, 0, -1, -2, -3, 200, 205, None, 42, 30, 2, 3, "NEGATIV"),
+            price_type="DAILY_CLOSE",
+            market_timestamp=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+        with patch("requests.sessions.Session.get") as network:
+            response = await self.client.get("/stocks/1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Kursdaten sind zu alt", response.text)
+        self.assertIn("01.08.2026", response.text)
+        network.assert_not_called()
+
+    async def test_decision_card_shows_position_perspective(self) -> None:
+        with create_session_factory(create_database(self.database_path)).begin() as session:
+            stock = session.scalar(select(Stock).where(Stock.symbol == "AIR.PAR"))
+            session.add(Position(stock_id=stock.id, purchase_price=Decimal("158.21"), quantity=Decimal("2"), purchase_date=date(2026, 1, 1), active=True))
+        with patch("requests.sessions.Session.get") as network:
+            response = await self.client.get(f"/stocks/{stock.id}")
+        self.assertIn("Bestehende Position", response.text)
+        self.assertIn("Neukauf / Aufstockung", response.text)
+        network.assert_not_called()
+
+    async def test_decision_card_translates_sell_by_perspective(self) -> None:
+        result = DecisionResult(
+            action=DecisionAction.SELL, confidence=40, current_price=200,
+            currency="EUR", generated_at=datetime.now(timezone.utc), data_timestamp=None,
+            has_position=True,
+            position_decision=PerspectiveResult(
+                DecisionPerspective.POSITION, DecisionAction.SELL, 40,
+            ),
+            entry_decision=PerspectiveResult(
+                DecisionPerspective.NEW_ENTRY, DecisionAction.SELL, 35,
+            ),
+        )
+        with patch("web.main.DecisionEngine.evaluate", return_value=result):
+            with patch("requests.sessions.Session.get") as network:
+                response = await self.client.get("/stocks/1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("VERKAUFEN", response.text)
+        self.assertIn("NICHT KAUFEN", response.text)
         network.assert_not_called()
 
     async def test_stock_detail_renders_completed_mkr_scorecard_levels_and_sources(self) -> None:
@@ -539,10 +595,10 @@ class WebTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertIn(f'href="/stocks/{goog_id}/providers"', detail.text)
         self.assertNotIn('<section class="card provider-panel">', detail.text)
-        self.assertIn("Jetzt aktualisieren", detail.text)
+        self.assertIn("Daten aktualisieren", detail.text)
         self.assertNotIn(">Kurs aktualisieren<", detail.text)
         self.assertNotIn(">Historie aktualisieren<", detail.text)
-        self.assertEqual(detail.text.count(">Jetzt aktualisieren<"), 1)
+        self.assertEqual(detail.text.count(">Daten aktualisieren<"), 1)
         self.assertNotIn('<section class="api-usage card">', detail.text)
         for label in ("Letzter Kurs", "Trend", "RSI14", "Performance 5 Tage", "Performance 20 Tage", "Performance 60 Tage", "SMA20", "SMA50"):
             self.assertIn(label, detail.text)
